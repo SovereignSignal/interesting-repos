@@ -1,47 +1,72 @@
 # Each [[theme]] becomes one Telegram message per weekly run, in the order below.
-# query: GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
-#        Sorting is via the `sort` field below, NOT a sort: qualifier.
-#        Note: multiple topic: qualifiers are AND-ed, so use one topic per theme.
-# rank:  "stars" (top by stars, no AI) or "llm" (Claude ranks against `profile`).
-# Non-English descriptions are auto-translated to English when Ollama is configured.
+#
+# query:   GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
+#          We use "breakout" queries — created in the last N days, sorted by stars —
+#          which surface what's *trending now*, not the all-time famous repos.
+#          Sorting is the `sort` field, NOT a sort: qualifier. Multiple topic:
+#          qualifiers are AND-ed, so use one topic per theme.
+# rank:    "stars" (top by stars, no AI) or "llm" (an Ollama model curates against
+#          `profile`, filtering spam / star-farmed / low-effort repos).
+# profile: what "interesting" means for this theme; guides the LLM curator.
+#
+# LLM curation + non-English translation both use Ollama (set OLLAMA_* env vars).
 
 [[theme]]
 key   = "trending"
-name  = "Trending This Week"
+name  = "Trending Overall"
 emoji = "📈"
-# Genuinely new repos created in the last 7 days that are gaining traction.
-# A discovery feed; star counts are modest because these repos are days old.
-query = "created:>{since:7d} stars:>50"
+query = "created:>{since:90d} stars:>1000"
 sort  = "stars"
 count = 7
-rank  = "stars"
+rank  = "llm"
+profile = "Breakout projects from the last few months that a broad developer audience genuinely finds interesting — novel tools, frameworks, models, or apps with real substance and momentum. Favor variety across domains."
 
 [[theme]]
 key   = "ai-agents"
-name  = "AI Agents & LLM Tooling"
+name  = "AI & Agents"
 emoji = "🤖"
-# Notable, active repos tagged with the ai-agents topic, biggest first.
-query = "topic:ai-agents stars:>1000 pushed:>{since:30d}"
+query = "topic:ai-agents created:>{since:90d}"
 sort  = "stars"
 count = 7
-rank  = "stars"
+rank  = "llm"
+profile = "Substantive AI agent frameworks, LLM applications, RAG/eval tooling, and agent infrastructure that engineers would actually use or learn from."
 
 [[theme]]
-key   = "top-stars"
-name  = "Top Stars"
-emoji = "🔥"
-# Most-starred repos that were active (pushed) in the last 7 days, biggest first.
-# Surfaces the heavyweight projects; dedup walks down the rankings each week.
-query = "stars:>5000 pushed:>{since:7d}"
+key   = "dev-tools"
+name  = "Dev Tools & CLI"
+emoji = "🛠️"
+query = "topic:cli created:>{since:90d}"
 sort  = "stars"
 count = 7
-rank  = "stars"
+rank  = "llm"
+profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and developer-experience projects with real utility."
+
+[[theme]]
+key   = "crypto"
+name  = "Crypto & Web3"
+emoji = "⛓️"
+query = "topic:web3 created:>{since:120d}"
+sort  = "stars"
+count = 7
+rank  = "llm"
+profile = "Substantive crypto / web3 / DeFi projects — protocols, infrastructure, SDKs, research, tooling. AGGRESSIVELY exclude pump-and-dump bots, airdrop/scam repos, keyword-stuffed SEO repos (e.g. a name or description that repeats the same words), and low-effort token shills."
 
 [[theme]]
 key   = "finance"
-name  = "Top Finance Repos"
+name  = "Finance & Quant"
 emoji = "💰"
-query = "finance stars:>500 pushed:>{since:365d}"
+query = "finance created:>{since:180d} stars:>100"
 sort  = "stars"
 count = 7
-rank  = "stars"
+rank  = "llm"
+profile = "Serious quantitative finance, algorithmic trading, market-data, and fintech projects with real engineering substance. Exclude scams and get-rich-quick repos."
+
+[[theme]]
+key   = "security"
+name  = "Security"
+emoji = "🔐"
+query = "topic:security created:>{since:120d}"
+sort  = "stars"
+count = 7
+rank  = "llm"
+profile = "Substantive security tooling — offensive, defensive, cloud, or AI/agent security. Favor real tools and research; exclude low-effort or spam repos."

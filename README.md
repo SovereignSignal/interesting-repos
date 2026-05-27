@@ -4,17 +4,19 @@ Weekly digest of trending GitHub repos, by theme, posted to a Telegram group.
 Push-only: a script run once a week by Railway cron. No server.
 
 ## How it works
-Discover (GitHub Search API) → rank (top-by-stars, or Claude for `rank=llm` themes)
-→ format (repo's own description, README-first-line fallback, non-English text
-translated to English via Claude) → post one message per theme → remember sent repos
-so nothing repeats. See `docs/superpowers/specs/` and `docs/superpowers/plans/` for
-the full design.
+Discover (GitHub Search API "breakout" queries: recently-created, high-star) →
+curate (an Ollama model picks the most interesting and filters spam/star-farms for
+`rank=llm` themes; else top-by-stars) → format (repo's own description,
+README-first-line fallback, non-English text translated to English via Ollama) →
+post one message per theme → remember sent repos so nothing repeats. See
+`docs/superpowers/specs/` and `docs/superpowers/plans/` for the full design.
 
 ## Themes
 Edit `themes.toml`. Each `[[theme]]` is one message. `query` uses GitHub Search
 qualifiers; `{since:Nd}` expands to N days ago. Sorting is the `sort` field, not a
-`sort:` qualifier. `rank = "llm"` ranks candidates against `profile` via Claude
-(needs `ANTHROPIC_API_KEY`); default `rank = "stars"` needs no AI.
+`sort:` qualifier. `rank = "llm"` has an Ollama model curate candidates against the
+theme's `profile` (filtering spam/star-farmed/low-effort repos); `rank = "stars"`
+just takes the top by stars (no AI). LLM curation needs `OLLAMA_*` set (below).
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)

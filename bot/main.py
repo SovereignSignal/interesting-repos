@@ -12,6 +12,9 @@ from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
 
+# Most candidates to hand the LLM curator per theme (keeps the prompt tight/fast).
+CANDIDATE_LIMIT = 30
+
 
 def run(config, today: date | None = None, dry_run: bool = False) -> int:
     today = today or date.today()
@@ -32,8 +35,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
             repos = search_repos(query, sort=theme.sort, order=theme.order,
                                  token=config.github_token)
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
-            repos = unsent(state, theme.key, repos)
-            picked = rank(repos, theme, anthropic_api_key=config.anthropic_api_key)
+            repos = unsent(state, theme.key, repos)[:CANDIDATE_LIMIT]
+            picked = rank(repos, theme, ollama_host=config.ollama_host,
+                          ollama_model=config.ollama_model, ollama_api_key=config.ollama_api_key)
             if not picked:
                 log.info("theme %s: no new repos", theme.key)
                 continue

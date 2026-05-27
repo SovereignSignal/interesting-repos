@@ -51,7 +51,6 @@ class Config:
     telegram_bot_token: str
     telegram_chat_id: str
     github_token: str
-    anthropic_api_key: str
     state_dir: str
     themes: list[Theme]
     ollama_host: str = "https://ollama.com"
@@ -72,7 +71,6 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         telegram_bot_token=require("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=require("TELEGRAM_CHAT_ID"),
         github_token=env.get("GITHUB_TOKEN", ""),
-        anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
         state_dir=env.get("STATE_DIR", "/data"),
         themes=load_themes(themes_path),
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),

@@ -1,48 +1,68 @@
 import json
+import re
 
-_MODEL = "claude-haiku-4-5"
+from bot.ollama import chat
+
+_INDICES_RE = re.compile(r"\[[\d,\s]*\]")
 
 
 def rank_by_stars(repos: list, count: int) -> list:
     return sorted(repos, key=lambda r: r.stars, reverse=True)[:count]
 
 
-def rank(repos: list, theme, anthropic_api_key: str = "", client=None) -> list:
-    if theme.rank == "llm" and anthropic_api_key:
+def rank(repos: list, theme, ollama_host: str = "", ollama_model: str = "",
+         ollama_api_key: str = "", client=None) -> list:
+    """Pick the top repos for a theme.
+
+    rank="llm": ask an Ollama model to curate (filtering spam/star-farms) against
+    the theme's profile. Falls back to top-by-stars if LLM is unavailable, errors,
+    or returns nothing — so a digest always ships.
+    """
+    if theme.rank == "llm" and ollama_host:
         try:
-            return _rank_llm(repos, theme, anthropic_api_key, client=client)[:theme.count]
+            picked = _rank_llm(repos, theme, ollama_host, ollama_model, ollama_api_key, client=client)
+            if picked:
+                return picked[:theme.count]
         except Exception:
-            pass  # graceful degradation: a digest still ships
+            pass  # graceful degradation
     return rank_by_stars(repos, theme.count)
 
 
-def _rank_llm(repos: list, theme, api_key: str, client=None):
-    if client is None:
-        import anthropic  # lazy: only needed for llm themes
-        client = anthropic.Anthropic(api_key=api_key)
+def _parse_indices(text: str) -> list:
+    """Extract a JSON array of ints from the model reply, tolerating code fences
+    and surrounding prose."""
+    match = _INDICES_RE.search(text)
+    if not match:
+        return []
+    try:
+        return json.loads(match.group(0))
+    except Exception:
+        return []
 
+
+def _rank_llm(repos: list, theme, host: str, model: str, api_key: str, client=None) -> list:
     lines = []
     for i, r in enumerate(repos):
         topics = ", ".join(r.topics)
         lines.append(f"{i}. {r.full_name} (★{r.stars}) — {r.description} [topics: {topics}]")
     listing = "\n".join(lines)
 
+    criteria = theme.profile or (
+        "genuinely interesting, substantive, currently-trending projects a developer "
+        "audience would want to know about"
+    )
     prompt = (
-        f"You are curating a list for the theme \"{theme.name}\".\n"
-        f"Reader interests: {theme.profile or 'general developer interest'}.\n\n"
-        f"Here are candidate repositories, each with an index:\n{listing}\n\n"
-        f"Return ONLY a JSON array of the {theme.count} most relevant indices, "
-        f"most relevant first. Example: [3, 0, 7]."
+        f'You are curating the list "{theme.name}" for a developer audience.\n'
+        f"Selection criteria: {criteria}.\n"
+        "Exclude spam, keyword-stuffed or scammy repos, joke/low-effort repos, and any "
+        "whose star count looks artificially inflated relative to their substance.\n\n"
+        f"Candidates (index. owner/name (stars) — description [topics]):\n{listing}\n\n"
+        f"Choose the {theme.count} best. Return ONLY a JSON array of their indices, "
+        "most interesting first. Example: [3, 0, 7]."
     )
-    resp = client.messages.create(
-        model=_MODEL,
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = resp.content[0].text.strip()
-    indices = json.loads(text)
+    text = chat(prompt, host=host, model=model, api_key=api_key, client=client)
     out = []
-    for idx in indices:
+    for idx in _parse_indices(text):
         if isinstance(idx, int) and 0 <= idx < len(repos):
             out.append(repos[idx])
     return out

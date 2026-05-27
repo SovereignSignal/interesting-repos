@@ -45,7 +45,9 @@ def test_load_config_reads_required_and_optional():
 def test_load_config_defaults_state_dir_and_blank_optionals():
     cfg = load_config(env=_env(), themes_path=str(SAMPLE))
     assert cfg.state_dir == "/data"
-    assert cfg.github_token == "" and cfg.anthropic_api_key == ""
+    assert cfg.github_token == ""
+    assert cfg.ollama_host == "https://ollama.com" and cfg.ollama_model == "gemma3:12b"
+    assert cfg.ollama_api_key == ""
 
 def test_load_config_missing_required_var_exits():
     with pytest.raises(SystemExit):
