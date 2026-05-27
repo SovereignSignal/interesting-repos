@@ -1,0 +1,14 @@
+[[theme]]
+key = "top-stars"
+name = "Top Stars This Week"
+emoji = "🔥"
+query = "created:>{since:7d}"
+sort = "stars"
+count = 5
+rank = "stars"
+
+[[theme]]
+key = "fin"
+name = "Finance"
+emoji = "💰"
+query = "finance"
