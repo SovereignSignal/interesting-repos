@@ -27,9 +27,12 @@ def test_send_message_retries_then_succeeds():
     out = send_message("tok", "-1", "hi", client=client, retries=3, sleep=lambda s: None)
     assert out == {"ok": True} and calls["n"] == 3
 
-def test_send_message_raises_after_exhausting_retries():
+def test_send_message_raises_sanitized_error_after_exhausting_retries():
     def handler(request):
         return httpx.Response(500)
     client = httpx.Client(transport=httpx.MockTransport(handler))
-    with pytest.raises(httpx.HTTPStatusError):
-        send_message("tok", "-1", "hi", client=client, retries=2, sleep=lambda s: None)
+    with pytest.raises(RuntimeError) as excinfo:
+        send_message("secrettoken", "-1", "hi", client=client, retries=2, sleep=lambda s: None)
+    msg = str(excinfo.value)
+    assert "HTTP 500" in msg
+    assert "secrettoken" not in msg   # the bot token must never leak into the error

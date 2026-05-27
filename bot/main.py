@@ -49,7 +49,7 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
             # trigger today; revisit (record per-message) only if a theme grows long.
             for m in messages:
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
-            record_sent(state, theme.key, [r.id for r in picked])
+            state = record_sent(state, theme.key, [r.id for r in picked])
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception:
