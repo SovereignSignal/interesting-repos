@@ -18,8 +18,11 @@ qualifiers; `{since:Nd}` expands to N days ago. Sorting is the `sort` field, not
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
-are auto-translated to English via Claude when `ANTHROPIC_API_KEY` is set. Without
-the key, descriptions are shown as-is. English/Latin text is never sent to the API.
+are auto-translated to English via an **Ollama** chat model (default `gemma3:12b`).
+Use Ollama Cloud (`OLLAMA_HOST=https://ollama.com` + `OLLAMA_API_KEY` from
+ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434`, no key).
+Leave `OLLAMA_HOST` blank to disable. English/Latin text is never sent to the model,
+and any translation error falls back to the original text.
 
 ## Setup
 1. Create a bot with [@BotFather](https://t.me/BotFather) → `TELEGRAM_BOT_TOKEN`.

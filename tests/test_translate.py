@@ -1,4 +1,12 @@
+import json
+
+import httpx
+
 from bot.translate import needs_translation, translate_to_english
+
+
+def _client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
 def test_needs_translation_detects_non_latin_scripts():
@@ -13,32 +21,43 @@ def test_needs_translation_false_for_latin_text():
     assert not needs_translation("")
 
 
-def test_translate_returns_original_without_key():
-    assert translate_to_english("微信账单", api_key="") == "微信账单"
+def test_translate_skips_english_without_calling_ollama():
+    def handler(request):
+        raise AssertionError("must not call Ollama for English text")
+    assert translate_to_english("Hello world", client=_client(handler)) == "Hello world"
 
 
-def test_translate_skips_english_even_with_key():
-    # English text must not trigger an API call; returned unchanged.
-    assert translate_to_english("Hello world", api_key="key") == "Hello world"
+def test_translate_disabled_when_host_empty():
+    def handler(request):
+        raise AssertionError("must not call Ollama when host is empty")
+    assert translate_to_english("微信账单", host="", client=_client(handler)) == "微信账单"
 
 
-def test_translate_uses_client_for_non_english():
-    class FakeMessages:
-        def create(self, **kwargs):
-            class Msg:
-                content = [type("B", (), {"text": "WeChat bill analysis tool"})()]
-            return Msg()
-
-    class FakeAnthropic:
-        messages = FakeMessages()
-
-    out = translate_to_english("微信账单分析工具", api_key="key", client=FakeAnthropic())
+def test_translate_calls_ollama_chat_and_sends_auth():
+    seen = {}
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("Authorization")
+        body = json.loads(request.content)
+        seen["model"] = body["model"]
+        seen["stream"] = body["stream"]
+        return httpx.Response(200, json={"message": {"content": "WeChat bill analysis tool"}})
+    out = translate_to_english("微信账单分析工具", model="gemma3:12b",
+                               api_key="key", client=_client(handler))
     assert out == "WeChat bill analysis tool"
+    assert seen["path"] == "/api/chat"
+    assert seen["auth"] == "Bearer key"
+    assert seen["model"] == "gemma3:12b" and seen["stream"] is False
+
+
+def test_translate_omits_auth_without_key():
+    def handler(request):
+        assert request.headers.get("Authorization") is None
+        return httpx.Response(200, json={"message": {"content": "hi"}})
+    assert translate_to_english("привет", client=_client(handler)) == "hi"
 
 
 def test_translate_falls_back_to_original_on_error():
-    class BoomClient:
-        def __getattr__(self, _):
-            raise RuntimeError("boom")
-
-    assert translate_to_english("微信账单", api_key="key", client=BoomClient()) == "微信账单"
+    def handler(request):
+        return httpx.Response(500)
+    assert translate_to_english("微信账单", client=_client(handler)) == "微信账单"

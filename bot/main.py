@@ -23,7 +23,8 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
         return readme_first_line(r.full_name, token=config.github_token)
 
     def translate(text):
-        return translate_to_english(text, api_key=config.anthropic_api_key)
+        return translate_to_english(text, host=config.ollama_host,
+                                    model=config.ollama_model, api_key=config.ollama_api_key)
 
     for theme in config.themes:
         try:
