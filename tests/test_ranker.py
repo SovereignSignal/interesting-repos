@@ -34,3 +34,31 @@ def test_rank_llm_error_falls_back_to_stars():
     repos = [R(1, 10), R(2, 99)]
     out = rank(repos, _theme("llm"), anthropic_api_key="key", client=BoomClient())
     assert [r.id for r in out] == [2, 1]
+
+
+import json
+from bot.ranker import _rank_llm
+
+class FakeMessages:
+    def __init__(self, payload): self._payload = payload
+    def create(self, **kwargs):
+        payload = self._payload
+        class Msg:  # mimic anthropic response.content[0].text
+            content = [type("B", (), {"text": json.dumps(payload)})()]
+        return Msg()
+
+class FakeAnthropic:
+    def __init__(self, payload): self.messages = FakeMessages(payload)
+
+def test_rank_llm_orders_by_returned_indices():
+    repos = [R(1, 10), R(2, 20), R(3, 30)]
+    theme = _theme("llm", count=2)
+    client = FakeAnthropic([2, 0])          # pick repo id 3, then id 1
+    out = _rank_llm(repos, theme, "key", client=client)
+    assert [r.id for r in out] == [3, 1]
+
+def test_rank_llm_ignores_out_of_range_indices():
+    repos = [R(1, 10), R(2, 20)]
+    client = FakeAnthropic([5, 1, 99])      # only index 1 is valid
+    out = _rank_llm(repos, _theme("llm"), "key", client=client)
+    assert [r.id for r in out] == [2]
