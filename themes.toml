@@ -2,12 +2,15 @@
 # query: GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
 #        Sorting is via the `sort` field below, NOT a sort: qualifier.
 # rank:  "stars" (top by stars, no AI) or "llm" (Claude ranks against `profile`).
+# Non-English descriptions are auto-translated to English when ANTHROPIC_API_KEY is set.
 
 [[theme]]
 key   = "top-stars"
 name  = "Top Stars This Week"
 emoji = "🔥"
-query = "created:>{since:7d} stars:>10"
+# Most-starred repos that were active (pushed) in the last 7 days, biggest first.
+# Surfaces high-star, alive projects; dedup walks down the rankings each week.
+query = "stars:>5000 pushed:>{since:7d}"
 sort  = "stars"
 count = 7
 rank  = "stars"

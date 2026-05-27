@@ -7,6 +7,7 @@ from bot.github import search_repos, readme_first_line
 from bot.ranker import rank
 from bot.formatter import build_messages
 from bot.telegram import send_message
+from bot.translate import translate_to_english
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -21,6 +22,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
     def describe(r):
         return readme_first_line(r.full_name, token=config.github_token)
 
+    def translate(text):
+        return translate_to_english(text, api_key=config.anthropic_api_key)
+
     for theme in config.themes:
         try:
             query = expand_since(theme.query, today)
@@ -33,7 +37,7 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                 log.info("theme %s: no new repos", theme.key)
                 continue
 
-            messages = build_messages(theme, picked, describe)
+            messages = build_messages(theme, picked, describe, translate)
 
             if dry_run:
                 for m in messages:

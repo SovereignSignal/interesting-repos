@@ -5,15 +5,21 @@ Push-only: a script run once a week by Railway cron. No server.
 
 ## How it works
 Discover (GitHub Search API) → rank (top-by-stars, or Claude for `rank=llm` themes)
-→ format (repo's own description, README-first-line fallback) → post one message per
-theme → remember sent repos so nothing repeats. See `docs/superpowers/specs/` and
-`docs/superpowers/plans/` for the full design.
+→ format (repo's own description, README-first-line fallback, non-English text
+translated to English via Claude) → post one message per theme → remember sent repos
+so nothing repeats. See `docs/superpowers/specs/` and `docs/superpowers/plans/` for
+the full design.
 
 ## Themes
 Edit `themes.toml`. Each `[[theme]]` is one message. `query` uses GitHub Search
 qualifiers; `{since:Nd}` expands to N days ago. Sorting is the `sort` field, not a
 `sort:` qualifier. `rank = "llm"` ranks candidates against `profile` via Claude
 (needs `ANTHROPIC_API_KEY`); default `rank = "stars"` needs no AI.
+
+## Translation
+Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
+are auto-translated to English via Claude when `ANTHROPIC_API_KEY` is set. Without
+the key, descriptions are shown as-is. English/Latin text is never sent to the API.
 
 ## Setup
 1. Create a bot with [@BotFather](https://t.me/BotFather) → `TELEGRAM_BOT_TOKEN`.

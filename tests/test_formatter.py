@@ -39,6 +39,13 @@ def test_build_messages_escapes_html_in_dynamic_text():
     assert "&lt;script&gt; &amp; stuff" in m
     assert "<script>" not in m
 
+def test_build_messages_applies_translate_to_description():
+    repos = [R(1, "a/b", "https://x/1", "微信账单", 10, "")]
+    msgs = build_messages(_theme(), repos, describe=lambda r: "",
+                          translate=lambda s: "WeChat bill" if s == "微信账单" else s)
+    assert "WeChat bill" in msgs[0]
+    assert "微信账单" not in msgs[0]
+
 def test_build_messages_splits_over_limit():
     repos = [R(i, f"a/{i}", "u", "x" * 1000, i, "Go") for i in range(10)]
     msgs = build_messages(_theme(), repos, describe=lambda r: "")

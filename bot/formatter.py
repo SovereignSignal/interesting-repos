@@ -3,8 +3,8 @@ from html import escape
 TELEGRAM_LIMIT = 4096
 
 
-def _entry(repo, describe) -> str:
-    desc = repo.description or describe(repo) or ""
+def _entry(repo, describe, translate) -> str:
+    desc = translate(repo.description or describe(repo) or "")
     meta = f"⭐ {repo.stars:,}"
     if repo.language:
         meta += f" · {escape(repo.language)}"
@@ -12,12 +12,12 @@ def _entry(repo, describe) -> str:
     return f"{meta}\n{title}\n{escape(desc)}".rstrip()
 
 
-def build_messages(theme, repos, describe) -> list[str]:
+def build_messages(theme, repos, describe, translate=lambda s: s) -> list[str]:
     header = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
     messages: list[str] = []
     current = header
     for repo in repos:
-        block = _entry(repo, describe)
+        block = _entry(repo, describe, translate)
         candidate = f"{current}\n\n{block}"
         if len(candidate) > TELEGRAM_LIMIT:
             messages.append(current)
