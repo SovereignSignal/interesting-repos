@@ -1,3 +1,4 @@
+import os
 import re
 import tomllib
 from dataclasses import dataclass
@@ -43,3 +44,32 @@ def load_themes(path: str) -> list[Theme]:
             profile=t.get("profile", ""),
         ))
     return themes
+
+
+@dataclass(frozen=True)
+class Config:
+    telegram_bot_token: str
+    telegram_chat_id: str
+    github_token: str
+    anthropic_api_key: str
+    state_dir: str
+    themes: list[Theme]
+
+
+def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Config:
+    env = os.environ if env is None else env
+
+    def require(name: str) -> str:
+        val = env.get(name)
+        if not val:
+            raise SystemExit(f"Missing required environment variable: {name}")
+        return val
+
+    return Config(
+        telegram_bot_token=require("TELEGRAM_BOT_TOKEN"),
+        telegram_chat_id=require("TELEGRAM_CHAT_ID"),
+        github_token=env.get("GITHUB_TOKEN", ""),
+        anthropic_api_key=env.get("ANTHROPIC_API_KEY", ""),
+        state_dir=env.get("STATE_DIR", "/data"),
+        themes=load_themes(themes_path),
+    )
