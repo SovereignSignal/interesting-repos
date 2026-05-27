@@ -18,6 +18,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
     state = load_state(state_path)
     failures = 0
 
+    def describe(r):
+        return readme_first_line(r.full_name, token=config.github_token)
+
     for theme in config.themes:
         try:
             query = expand_since(theme.query, today)
@@ -30,9 +33,6 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                 log.info("theme %s: no new repos", theme.key)
                 continue
 
-            def describe(r):
-                return readme_first_line(r.full_name, token=config.github_token)
-
             messages = build_messages(theme, picked, describe)
 
             if dry_run:
@@ -41,6 +41,12 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                     print("-" * 40)
                 continue
 
+            # State is recorded only after every message for the theme is sent, so a
+            # crash never marks a repo "sent" that wasn't delivered. The deliberate
+            # tradeoff (see spec): we prefer re-sending over losing a repo. If a theme
+            # splits into multiple messages and a later one fails, the earlier ones may
+            # be re-sent next run. The starter themes fit in one message, so this can't
+            # trigger today; revisit (record per-message) only if a theme grows long.
             for m in messages:
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
             record_sent(state, theme.key, [r.id for r in picked])
