@@ -23,6 +23,12 @@ def test_parse_repo_handles_nulls():
     assert r.description == "" and r.language == "" and r.stars == 0
     assert r.topics == [] and r.is_fork is False and r.is_archived is False
 
+def test_parse_repo_copies_topics_not_aliases_source():
+    src = {"id": 1, "full_name": "a/b", "html_url": "u", "topics": ["x"]}
+    r = parse_repo(src)
+    r.topics.append("y")           # mutating the repo's list...
+    assert src["topics"] == ["x"]  # ...must not corrupt the source dict
+
 
 import httpx
 from bot.github import search_repos

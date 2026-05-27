@@ -26,7 +26,7 @@ def parse_repo(item: dict) -> Repo:
         description=item.get("description") or "",
         stars=item.get("stargazers_count", 0),
         language=item.get("language") or "",
-        topics=item.get("topics") or [],
+        topics=list(item.get("topics") or []),
         is_fork=bool(item.get("fork", False)),
         is_archived=bool(item.get("archived", False)),
     )
@@ -74,11 +74,10 @@ def readme_first_line(full_name: str, token: str = "",
         resp = client.get(f"{_API}/repos/{full_name}/readme", headers=headers)
         resp.raise_for_status()
         for raw in resp.text.splitlines():
-            line = raw.lstrip("# ").strip()
             if not _is_noise(raw):
-                return line[:200]
+                return raw.strip()[:200]
         return ""
-    except Exception:
+    except httpx.HTTPError:
         return ""
     finally:
         if owns_client:
