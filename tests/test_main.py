@@ -5,8 +5,9 @@ from bot.github import Repo
 
 
 def _cfg(tmp_path, themes):
-    # Config(tg_token, tg_chat, github_token, state_dir, themes); ollama_* default.
-    return Config("tok", "-100", "", str(tmp_path), themes)
+    # Config(tg_token, tg_chat, github_token, state_dir, themes, ollama_host=...).
+    # ollama_host="" keeps make_titles/translate/rank offline in tests.
+    return Config("tok", "-100", "", str(tmp_path), themes, "")
 
 def _repo(i, stars):
     return Repo(i, f"a/{i}", f"https://x/{i}", "desc", stars, "Py", [], False, False)

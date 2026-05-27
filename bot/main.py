@@ -8,6 +8,7 @@ from bot.ranker import rank
 from bot.formatter import build_messages
 from bot.telegram import send_message
 from bot.translate import translate_to_english
+from bot.titles import make_titles
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -42,7 +43,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                 log.info("theme %s: no new repos", theme.key)
                 continue
 
-            messages = build_messages(theme, picked, describe, translate)
+            titles = make_titles(picked, host=config.ollama_host,
+                                 model=config.ollama_model, api_key=config.ollama_api_key)
+            messages = build_messages(theme, picked, describe, translate, titles)
 
             if dry_run:
                 for m in messages:

@@ -3,21 +3,24 @@ from html import escape
 TELEGRAM_LIMIT = 4096
 
 
-def _entry(repo, describe, translate) -> str:
+def _entry(repo, title, describe, translate) -> str:
     desc = translate(repo.description or describe(repo) or "")
+    heading = f'<a href="{repo.html_url}"><b>{escape(title)}</b></a>'
     meta = f"⭐ {repo.stars:,}"
     if repo.language:
         meta += f" · {escape(repo.language)}"
-    title = f'<a href="{repo.html_url}">{escape(repo.full_name)}</a>'
-    return f"{meta}\n{title}\n{escape(desc)}".rstrip()
+    meta += f" · {escape(repo.full_name)}"
+    return f"{heading}\n{meta}\n{escape(desc)}".rstrip()
 
 
-def build_messages(theme, repos, describe, translate=lambda s: s) -> list[str]:
+def build_messages(theme, repos, describe, translate=lambda s: s, titles=None) -> list[str]:
     header = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
+    if titles is None:
+        titles = [r.full_name for r in repos]
     messages: list[str] = []
     current = header
-    for repo in repos:
-        block = _entry(repo, describe, translate)
+    for repo, title in zip(repos, titles):
+        block = _entry(repo, title, describe, translate)
         candidate = f"{current}\n\n{block}"
         if len(candidate) > TELEGRAM_LIMIT:
             messages.append(current)
