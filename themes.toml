@@ -1,15 +1,37 @@
-# Each [[theme]] becomes one Telegram message per weekly run.
+# Each [[theme]] becomes one Telegram message per weekly run, in the order below.
 # query: GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
 #        Sorting is via the `sort` field below, NOT a sort: qualifier.
+#        Note: multiple topic: qualifiers are AND-ed, so use one topic per theme.
 # rank:  "stars" (top by stars, no AI) or "llm" (Claude ranks against `profile`).
-# Non-English descriptions are auto-translated to English when ANTHROPIC_API_KEY is set.
+# Non-English descriptions are auto-translated to English when Ollama is configured.
+
+[[theme]]
+key   = "trending"
+name  = "Trending This Week"
+emoji = "📈"
+# Genuinely new repos created in the last 7 days that are gaining traction.
+# A discovery feed; star counts are modest because these repos are days old.
+query = "created:>{since:7d} stars:>50"
+sort  = "stars"
+count = 7
+rank  = "stars"
+
+[[theme]]
+key   = "ai-agents"
+name  = "AI Agents & LLM Tooling"
+emoji = "🤖"
+# Notable, active repos tagged with the ai-agents topic, biggest first.
+query = "topic:ai-agents stars:>1000 pushed:>{since:30d}"
+sort  = "stars"
+count = 7
+rank  = "stars"
 
 [[theme]]
 key   = "top-stars"
-name  = "Top Stars This Week"
+name  = "Top Stars"
 emoji = "🔥"
 # Most-starred repos that were active (pushed) in the last 7 days, biggest first.
-# Surfaces high-star, alive projects; dedup walks down the rankings each week.
+# Surfaces the heavyweight projects; dedup walks down the rankings each week.
 query = "stars:>5000 pushed:>{since:7d}"
 sort  = "stars"
 count = 7
