@@ -54,8 +54,12 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str, client=No
     prompt = (
         f'You are curating the list "{theme.name}" for a developer audience.\n'
         f"Selection criteria: {criteria}.\n"
-        "Exclude spam, keyword-stuffed or scammy repos, joke/low-effort repos, and any "
-        "whose star count looks artificially inflated relative to their substance.\n\n"
+        "Exclude: spam, keyword-stuffed or scammy repos; joke or low-effort repos; "
+        "'awesome-*' link lists and curated-list repos (prefer real tools, libraries, "
+        "and apps); and repos whose star count looks artificially inflated or that lean "
+        "on hype (e.g. 'fastest repo to 100K stars', 'enjoy the party').\n"
+        "Prefer a DIVERSE set — do not fill the list with many near-identical projects "
+        "(e.g. interchangeable 'AI coding agent skill' packs); pick the most distinctive.\n\n"
         f"Candidates (index. owner/name (stars) — description [topics]):\n{listing}\n\n"
         f"Choose the {theme.count} best. Return ONLY a JSON array of their indices, "
         "most interesting first. Example: [3, 0, 7]."
