@@ -49,3 +49,24 @@ def test_search_repos_omits_auth_without_token():
         assert request.headers.get("Authorization") is None
         return httpx.Response(200, json={"items": []})
     assert search_repos("x", sort="stars", order="desc", client=_client(handler)) == []
+
+
+from bot.github import readme_first_line
+
+def _readme_client(body, status=200):
+    def handler(request):
+        assert request.url.path.endswith("/readme")
+        assert request.headers.get("Accept") == "application/vnd.github.raw+json"
+        return httpx.Response(status, text=body)
+    return _client(handler)
+
+def test_readme_first_line_skips_headings_and_badges():
+    body = "# Title\n\n![badge](x.svg)\n\nThe real first sentence.\n"
+    assert readme_first_line("a/b", client=_readme_client(body)) == "The real first sentence."
+
+def test_readme_first_line_truncates_to_200():
+    body = "x" * 500
+    assert len(readme_first_line("a/b", client=_readme_client(body))) == 200
+
+def test_readme_first_line_returns_empty_on_error():
+    assert readme_first_line("a/b", client=_readme_client("nope", status=404)) == ""

@@ -48,3 +48,38 @@ def search_repos(query: str, sort: str = "stars", order: str = "desc",
     finally:
         if owns_client:
             client.close()
+
+
+def _is_noise(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return True
+    if s.startswith("#"):             # markdown heading
+        return True
+    if set(s) <= set("=-*_> "):       # heading underline / rule / blockquote marker
+        return True
+    if s.startswith(("![", "[![", "<")):  # badge/image/html
+        return True
+    return False
+
+
+def readme_first_line(full_name: str, token: str = "",
+                      client: httpx.Client | None = None) -> str:
+    headers = {"Accept": "application/vnd.github.raw+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    owns_client = client is None
+    client = client or httpx.Client(timeout=30)
+    try:
+        resp = client.get(f"{_API}/repos/{full_name}/readme", headers=headers)
+        resp.raise_for_status()
+        for raw in resp.text.splitlines():
+            line = raw.lstrip("# ").strip()
+            if not _is_noise(raw):
+                return line[:200]
+        return ""
+    except Exception:
+        return ""
+    finally:
+        if owns_client:
+            client.close()
