@@ -1,0 +1,22 @@
+# Each [[theme]] becomes one Telegram message per weekly run.
+# query: GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
+#        Sorting is via the `sort` field below, NOT a sort: qualifier.
+# rank:  "stars" (top by stars, no AI) or "llm" (Claude ranks against `profile`).
+
+[[theme]]
+key   = "top-stars"
+name  = "Top Stars This Week"
+emoji = "🔥"
+query = "created:>{since:7d} stars:>10"
+sort  = "stars"
+count = 7
+rank  = "stars"
+
+[[theme]]
+key   = "finance"
+name  = "Top Finance Repos"
+emoji = "💰"
+query = "finance stars:>500 pushed:>{since:365d}"
+sort  = "stars"
+count = 7
+rank  = "stars"
