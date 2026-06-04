@@ -25,6 +25,8 @@ class Theme:
     count: int = 7
     rank: str = "stars"
     profile: str = ""
+    catch_all: bool = False
+    max_idle_days: int = 60
 
 
 def load_themes(path: str) -> list[Theme]:
@@ -42,6 +44,8 @@ def load_themes(path: str) -> list[Theme]:
             count=t.get("count", 7),
             rank=t.get("rank", "stars"),
             profile=t.get("profile", ""),
+            catch_all=t.get("catch_all", False),
+            max_idle_days=t.get("max_idle_days", 60),
         ))
     return themes
 
