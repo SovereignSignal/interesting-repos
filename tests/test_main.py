@@ -60,3 +60,37 @@ def test_run_isolates_theme_failures(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "rank", flaky_rank)
     failures = main.run(_cfg(tmp_path, [good, bad]), today=date(2026, 5, 26))
     assert failures == 1 and len(sent) == 1
+
+
+def test_run_dedups_repo_across_themes(tmp_path, monkeypatch):
+    sent = []
+    def fake_search(query, **k):
+        # `first` (query AAA) and `second` (query BBB) both surface repo id=1.
+        return [_repo(1, 100), _repo(2, 50)] if "AAA" in query else [_repo(1, 100), _repo(3, 40)]
+    monkeypatch.setattr(main, "search_repos", lambda query, **k: fake_search(query))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    first = Theme(key="first", name="F", emoji="", query="AAA", count=5)
+    second = Theme(key="second", name="S", emoji="", query="BBB", count=5)
+    main.run(_cfg(tmp_path, [first, second]), today=date(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["first"] == [1, 2]    # `first` selected first, claims repo 1
+    assert saved["second"] == [3]      # repo 1 deduped out of `second`
+
+
+def test_run_catch_all_selected_last_but_delivered_first(tmp_path, monkeypatch):
+    sent = []
+    def fake_search(query, **k):
+        return [_repo(1, 100), _repo(9, 80)] if "TR" in query else [_repo(1, 100), _repo(2, 50)]
+    monkeypatch.setattr(main, "search_repos", lambda query, **k: fake_search(query))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    trending = Theme(key="trending", name="Trending", emoji="📈", query="TR", count=5, catch_all=True)
+    ai = Theme(key="ai", name="AI", emoji="🤖", query="AI", count=5)
+    main.run(_cfg(tmp_path, [trending, ai]), today=date(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["ai"] == [1, 2]                  # ai selected first, claims shared repo 1
+    assert saved["trending"] == [9]               # trending selected last -> repo 1 deduped out
+    assert "📈" in sent[0] and "🤖" in sent[1]      # delivered in themes.toml (display) order
