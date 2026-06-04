@@ -16,6 +16,8 @@ class Repo:
     topics: list[str]
     is_fork: bool
     is_archived: bool
+    created_at: str = ""
+    pushed_at: str = ""
 
 
 def parse_repo(item: dict) -> Repo:
@@ -29,6 +31,8 @@ def parse_repo(item: dict) -> Repo:
         topics=list(item.get("topics") or []),
         is_fork=bool(item.get("fork", False)),
         is_archived=bool(item.get("archived", False)),
+        created_at=item.get("created_at") or "",
+        pushed_at=item.get("pushed_at") or "",
     )
 
 

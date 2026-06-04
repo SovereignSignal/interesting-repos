@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import date
 
 import httpx
 
@@ -13,6 +14,8 @@ class R:
     full_name: str = "a/b"
     description: str = "d"
     topics: list = field(default_factory=list)
+    created_at: str = ""
+    pushed_at: str = ""
 
 
 def _theme(rank_mode="stars", count=2):
@@ -66,3 +69,27 @@ def test_rank_llm_ignores_out_of_range_indices():
     repos = [R(1, 10), R(2, 20)]
     out = _rank_llm(repos, _theme("llm"), "http://x", "m", "k", client=_content_client("[5, 1, 99]"))
     assert [r.id for r in out] == [2]
+
+
+def test_rank_by_stars_deprioritizes_velocity_outliers():
+    today = date(2026, 6, 4)
+    farm = R(1, 200000, created_at="2026-06-02T00:00:00Z")   # ~100000 stars/day
+    real = R(2, 300, created_at="2026-05-01T00:00:00Z")      # ~9 stars/day
+    # count=1 must skip the farm even though it has far more stars
+    assert [r.id for r in rank_by_stars([farm, real], 1, today)] == [2]
+    # count=2 keeps both, but the farm is last
+    assert [r.id for r in rank_by_stars([farm, real], 2, today)] == [2, 1]
+
+
+def test_rank_llm_listing_includes_age_and_velocity():
+    today = date(2026, 6, 4)
+    captured = {}
+    def handler(request):
+        import json as _json
+        captured["prompt"] = _json.loads(request.content)["messages"][0]["content"]
+        return httpx.Response(200, json={"message": {"content": "[0]"}})
+    repos = [R(1, 500, created_at="2026-06-01T00:00:00Z", pushed_at="2026-06-03T00:00:00Z")]
+    _rank_llm(repos, _theme("llm", 1), "http://x", "m", "k", today=today, client=_client(handler))
+    assert "3d old" in captured["prompt"]         # created 2026-06-01 -> 3 days
+    assert "pushed 1d ago" in captured["prompt"]   # pushed 2026-06-03 -> 1 day
+    assert "★/day" in captured["prompt"]

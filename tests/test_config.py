@@ -52,3 +52,17 @@ def test_load_config_defaults_state_dir_and_blank_optionals():
 def test_load_config_missing_required_var_exits():
     with pytest.raises(SystemExit):
         load_config(env={"TELEGRAM_CHAT_ID": "-1"}, themes_path=str(SAMPLE))
+
+
+def test_load_themes_defaults_catch_all_and_idle(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    t = load_themes(str(p))[0]
+    assert t.catch_all is False and t.max_idle_days == 60
+
+
+def test_load_themes_reads_catch_all_and_idle(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ncatch_all=true\nmax_idle_days=30\n')
+    t = load_themes(str(p))[0]
+    assert t.catch_all is True and t.max_idle_days == 30

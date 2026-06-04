@@ -76,3 +76,15 @@ def test_readme_first_line_truncates_to_200():
 
 def test_readme_first_line_returns_empty_on_error():
     assert readme_first_line("a/b", client=_readme_client("nope", status=404)) == ""
+
+
+def test_parse_repo_reads_timestamps():
+    r = parse_repo({**ITEM, "created_at": "2026-06-01T00:00:00Z",
+                    "pushed_at": "2026-06-03T00:00:00Z"})
+    assert r.created_at == "2026-06-01T00:00:00Z"
+    assert r.pushed_at == "2026-06-03T00:00:00Z"
+
+
+def test_parse_repo_defaults_timestamps_to_empty():
+    r = parse_repo({"id": 1, "full_name": "a/b", "html_url": "u"})
+    assert r.created_at == "" and r.pushed_at == ""
