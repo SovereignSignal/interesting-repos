@@ -60,6 +60,25 @@ def _describe_age(repo, today: date) -> str:
     return f"{created_s}, {pushed_s}, {round(star_velocity(repo, today))}★/day"
 
 
+_AGENT_SKILL_DEF = (
+    "A 'generic AI-agent/skill pack' is a repo whose main offering is a collection of "
+    "skills, subagents, prompts, or MCP servers for coding agents (Claude Code, Codex, "
+    "Cursor, Gemini CLI, Copilot, OpenClaw, etc.) — not a substantive standalone tool, "
+    "library, app, or framework. "
+)
+
+
+def _diversity_directive(cap) -> str:
+    """Per-theme agent-skill policy line for the prompt (cap = theme.agent_skill_cap)."""
+    if cap is None:
+        return ""
+    if cap == 0:
+        return (_AGENT_SKILL_DEF + "Do NOT select ANY generic AI-agent/skill packs for "
+                "this list — it is for everything else that's trending.\n")
+    return (_AGENT_SKILL_DEF + f"Select AT MOST {cap} generic AI-agent/skill packs; fill "
+            "the remaining slots with substantive projects from distinct domains.\n")
+
+
 def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
               today: date | None = None, client=None) -> list:
     today = today or date.today()
@@ -84,9 +103,8 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
         "Prefer repos that are fresh and actively maintained (recently pushed). Discount "
         "stale repos (not pushed in weeks) and repos whose stars grew implausibly fast "
         "(very high ★/day), which are often star-farmed.\n"
-        "Prefer a DIVERSE set — do not fill the list with many near-identical projects "
-        "(e.g. interchangeable 'AI coding agent skill' packs); pick the most distinctive.\n\n"
-        f"Candidates (index. owner/name (stars, age, velocity) — description [topics]):\n{listing}\n\n"
+        f"{_diversity_directive(theme.agent_skill_cap)}"
+        f"\nCandidates (index. owner/name (stars, age, velocity) — description [topics]):\n{listing}\n\n"
         f"Choose the {theme.count} best. Return ONLY a JSON array of their indices, "
         "most interesting first. Example: [3, 0, 7]."
     )
