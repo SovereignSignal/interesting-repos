@@ -19,6 +19,7 @@ query = "created:>{since:90d} stars:>1000"
 sort  = "stars"
 count = 7
 rank  = "llm"
+catch_all = true
 profile = "Breakout projects from the last few months that a broad developer audience genuinely finds interesting — novel tools, frameworks, models, or apps with real substance and momentum. Favor variety across domains."
 
 [[theme]]
