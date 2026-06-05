@@ -108,16 +108,12 @@ def _prompt_for(cap):
     return captured["p"]
 
 
-def test_prompt_excludes_agent_skills_when_cap_zero():
-    assert "Do NOT select ANY generic AI-agent/skill packs" in _prompt_for(0)
-
-
-def test_prompt_caps_agent_skills_when_cap_set():
-    assert "AT MOST 2 generic AI-agent/skill packs" in _prompt_for(2)
-
-
-def test_prompt_has_no_diversity_directive_when_cap_none():
-    p = _prompt_for(None)
-    assert "AT MOST" not in p
-    assert "Do NOT select" not in p
-    assert "Prefer a DIVERSE set" not in p   # the old soft sentence is removed
+def test_curation_prompt_has_no_cap_directive():
+    # v3 enforcement is deterministic (filters.cap_agent_skills); the curation prompt
+    # carries no agent-skill cap directive for any cap value.
+    for cap in (None, 0, 2):
+        p = _prompt_for(cap)
+        assert "AT MOST" not in p
+        assert "Do NOT select" not in p
+        assert "NON-AI highlight" not in p
+        assert "Prefer a DIVERSE set" not in p   # the old soft sentence is removed
