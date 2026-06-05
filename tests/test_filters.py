@@ -64,3 +64,59 @@ def test_clean_drops_noise_and_stale_preserving_order():
     stale = _repo(full_name="x/stale", description="old", pushed_at="2026-01-01T00:00:00Z")
     out = clean([good, spam, awesome, stale], today, 60)
     assert [r.full_name for r in out] == ["acme/good"]
+
+
+from bot.filters import is_agent_skill_pack, is_ai_repo, cap_agent_skills
+
+
+def test_is_agent_skill_pack_flags_collections():
+    assert is_agent_skill_pack(_repo(full_name="himself65/finance-skills",
+                                     description="A collection of skills for AI analysis")) is True
+    assert is_agent_skill_pack(_repo(full_name="x/y",
+                                     description="754 structured cybersecurity skills for AI agents")) is True
+    assert is_agent_skill_pack(_repo(full_name="x/y", topics=["agent-skills"])) is True
+    assert is_agent_skill_pack(_repo(full_name="Leonxlnx/taste-skill", description="gives your AI taste")) is True
+
+
+def test_is_agent_skill_pack_passes_real_tools():
+    assert is_agent_skill_pack(_repo(full_name="NVIDIA/NemoClaw",
+                                     description="Run agents like Hermes more securely")) is False
+    assert is_agent_skill_pack(_repo(full_name="t8y2/dbx",
+                                     description="lightweight cross-platform database client")) is False
+
+
+def test_is_ai_repo_flags_ai_and_packs():
+    assert is_ai_repo(_repo(full_name="garrytan/gstack",
+                            description="Use Garry Tan's exact Claude Code setup")) is True
+    assert is_ai_repo(_repo(full_name="x/finance-skills", description="collection of skills for ai")) is True
+    assert is_ai_repo(_repo(full_name="z/tool", topics=["ai-agents"], description="orchestration")) is True
+
+
+def test_is_ai_repo_passes_non_ai():
+    assert is_ai_repo(_repo(full_name="chenglou/pretext",
+                            description="Fast, accurate & comprehensive text measurement & layout")) is False
+    assert is_ai_repo(_repo(full_name="NawfalMotii79/PLFM_RADAR",
+                            description="Open-source 10.5 GHz PLFM phased array RADAR system")) is False
+    assert is_ai_repo(_repo(full_name="t8y2/dbx", description="cross-platform database client")) is False
+
+
+def test_cap_agent_skills_none_is_passthrough():
+    repos = [_repo(full_name="a/x-skills", description="skills for ai"),
+             _repo(full_name="b/db", description="database")]
+    assert cap_agent_skills(repos, None) == repos
+
+
+def test_cap_agent_skills_zero_drops_all_ai():
+    ai = _repo(full_name="a/gstack", description="Claude Code setup")
+    pack = _repo(full_name="b/x-skills", description="skills for claude code")
+    clean_repo = _repo(full_name="c/pretext", description="text measurement and layout")
+    assert cap_agent_skills([ai, pack, clean_repo], 0) == [clean_repo]
+
+
+def test_cap_agent_skills_n_limits_packs_keeps_tools():
+    p1 = _repo(full_name="a/one-skills", description="skills for agents")
+    tool = _repo(full_name="b/nemo", topics=["ai-agents"], description="run agents")  # AI tool, not a pack
+    p2 = _repo(full_name="c/two-skills", description="skill pack")
+    p3 = _repo(full_name="d/three-skills", description="agent skill collection")
+    out = cap_agent_skills([p1, tool, p2, p3], 2)
+    assert out == [p1, tool, p2]   # all non-packs kept + at most 2 packs; p3 dropped
