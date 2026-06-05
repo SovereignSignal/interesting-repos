@@ -214,3 +214,39 @@ entirely through the existing theme → ranker path.)
 - Deterministic diversity backstop for the fallback path.
 - Per-theme retuning of queries/profiles once real digests are observed.
 - GitHub `Retry-After`, presentation/preview images, failure alerting.
+
+## 11. Revision (2026-06-04): deterministic enforcement
+
+A live dry-run **falsified the LLM-driven approach (§7).** Five models — `gemma3:12b`,
+`gemma3:27b`, `gpt-oss:120b`, `qwen3-next:80b`, `glm-4.7` — all failed to honor the
+cap; the strongest (`qwen3-next:80b`) was the **worst** (Trending 1/7 non-AI; the
+754-skill `Anthropic-Cybersecurity-Skills` pack returned to Security; `finance-skills`
+returned to Finance). "Exclude all of category X" and "at most N of X" are negative /
+counting constraints LLMs don't reliably follow — and a more capable model optimizing
+for relevance fights the constraint *harder*.
+
+Enforcement therefore moves from the **prompt** to deterministic **pool-shaping**. The
+`agent_skill_cap` field (§4.1) stays; only the mechanism changes:
+
+- **`bot/filters.py`** gains:
+  - `is_agent_skill_pack(repo)` — *narrow*: a skill/subagent/prompt collection (repo
+    name contains "skill"; a skill topic; or a description pattern like "skills for",
+    "agent skill", "subagent", "N skills"). Targets the **clones**, not standalone AI
+    tools.
+  - `is_ai_repo(repo)` — *broad*: any AI/agent/LLM repo (skill-pack, OR an AI topic,
+    OR a marker like "claude code", "ai agent", "mcp server", "llm", "agentic").
+  - `cap_agent_skills(repos, cap)` — `None` → passthrough; `0` → drop every
+    `is_ai_repo` (Trending becomes non-AI); `N` → keep all non-packs plus at most `N`
+    `is_agent_skill_pack` repos (order preserved). High-precision hard drops only.
+- **`bot/main.py`** Phase 1 applies `cap_agent_skills(repos, theme.agent_skill_cap)`
+  after cross-theme dedup, before the `CANDIDATE_LIMIT` slice and ranking.
+- **`bot/ranker.py`** reverts the §4.2 prompt directive (`_AGENT_SKILL_DEF` /
+  `_diversity_directive` removed) — the pool is pre-shaped, so the prompt needs no cap
+  instruction. `gemma3:12b` stays; it ranks relevance fine on a shaped pool.
+
+**Accepted reality:** Trending underfills to ~2–3 repos — only that many genuinely
+non-AI repos are trending in mid-2026. Honest, not a bug.
+
+**Testing shift:** the deterministic classifiers + `cap_agent_skills` are unit-tested
+directly (truth tables), and the end-to-end effect is validated **keyless** on the
+real pool (no further Ollama spend). The §8 prompt-directive tests are removed.
