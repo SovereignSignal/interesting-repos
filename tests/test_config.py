@@ -66,3 +66,22 @@ def test_load_themes_reads_catch_all_and_idle(tmp_path):
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ncatch_all=true\nmax_idle_days=30\n')
     t = load_themes(str(p))[0]
     assert t.catch_all is True and t.max_idle_days == 30
+
+
+def test_load_themes_reads_agent_skill_cap(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nagent_skill_cap=2\n')
+    assert load_themes(str(p))[0].agent_skill_cap == 2
+
+
+def test_load_themes_agent_skill_cap_absent_is_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].agent_skill_cap is None
+
+
+def test_load_themes_agent_skill_cap_zero_is_kept(tmp_path):
+    # 0 must survive as 0 (exclude policy), not be coerced to None
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nagent_skill_cap=0\n')
+    assert load_themes(str(p))[0].agent_skill_cap == 0

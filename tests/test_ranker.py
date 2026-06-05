@@ -93,3 +93,27 @@ def test_rank_llm_listing_includes_age_and_velocity():
     assert "3d old" in captured["prompt"]         # created 2026-06-01 -> 3 days
     assert "pushed 1d ago" in captured["prompt"]   # pushed 2026-06-03 -> 1 day
     assert "★/day" in captured["prompt"]
+
+
+def _prompt_for(cap):
+    captured = {}
+    def handler(request):
+        import json as _json
+        captured["p"] = _json.loads(request.content)["messages"][0]["content"]
+        return httpx.Response(200, json={"message": {"content": "[0]"}})
+    theme = Theme(key="t", name="T", emoji="", query="q", rank="llm", count=7,
+                  agent_skill_cap=cap)
+    _rank_llm([R(1, 10, created_at="2026-06-01T00:00:00Z")], theme, "http://x", "m", "k",
+              today=date(2026, 6, 4), client=_client(handler))
+    return captured["p"]
+
+
+def test_curation_prompt_has_no_cap_directive():
+    # v3 enforcement is deterministic (filters.cap_agent_skills); the curation prompt
+    # carries no agent-skill cap directive for any cap value.
+    for cap in (None, 0, 2):
+        p = _prompt_for(cap)
+        assert "AT MOST" not in p
+        assert "Do NOT select" not in p
+        assert "NON-AI highlight" not in p
+        assert "Prefer a DIVERSE set" not in p   # the old soft sentence is removed

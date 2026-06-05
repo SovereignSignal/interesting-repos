@@ -27,6 +27,7 @@ class Theme:
     profile: str = ""
     catch_all: bool = False
     max_idle_days: int = 60
+    agent_skill_cap: int | None = None
 
 
 def load_themes(path: str) -> list[Theme]:
@@ -46,6 +47,7 @@ def load_themes(path: str) -> list[Theme]:
             profile=t.get("profile", ""),
             catch_all=t.get("catch_all", False),
             max_idle_days=t.get("max_idle_days", 60),
+            agent_skill_cap=t.get("agent_skill_cap"),
         ))
     return themes
 

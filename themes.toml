@@ -20,6 +20,7 @@ sort  = "stars"
 count = 7
 rank  = "llm"
 catch_all = true
+agent_skill_cap = 0
 profile = "Breakout projects from the last few months that a broad developer audience genuinely finds interesting — novel tools, frameworks, models, or apps with real substance and momentum. Favor variety across domains."
 
 [[theme]]
@@ -40,6 +41,7 @@ query = "topic:cli created:>{since:90d}"
 sort  = "stars"
 count = 7
 rank  = "llm"
+agent_skill_cap = 2
 profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and developer-experience projects with real utility."
 
 [[theme]]
@@ -50,6 +52,7 @@ query = "topic:web3 created:>{since:120d}"
 sort  = "stars"
 count = 7
 rank  = "llm"
+agent_skill_cap = 2
 profile = "Substantive crypto / web3 / DeFi projects — protocols, infrastructure, SDKs, research, tooling. AGGRESSIVELY exclude pump-and-dump bots, airdrop/scam repos, keyword-stuffed SEO repos (e.g. a name or description that repeats the same words), and low-effort token shills."
 
 [[theme]]
@@ -60,6 +63,7 @@ query = "finance created:>{since:180d} stars:>100"
 sort  = "stars"
 count = 7
 rank  = "llm"
+agent_skill_cap = 2
 profile = "Serious quantitative finance, algorithmic trading, market-data, and fintech projects with real engineering substance. Exclude scams and get-rich-quick repos."
 
 [[theme]]
@@ -70,4 +74,49 @@ query = "topic:security created:>{since:120d}"
 sort  = "stars"
 count = 7
 rank  = "llm"
+agent_skill_cap = 2
 profile = "Substantive security tooling — offensive, defensive, cloud, or AI/agent security. Favor real tools and research; exclude low-effort or spam repos."
+
+[[theme]]
+key   = "systems"
+name  = "Systems & Languages"
+emoji = "⚙️"
+query = "topic:systems-programming created:>{since:180d} stars:>10"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+profile = "Substantive systems & low-level work — languages, compilers, runtimes, OS, emulators, allocators, performance engineering. Favor real implementations over tutorials or skill packs."
+
+[[theme]]
+key   = "data"
+name  = "Data & Databases"
+emoji = "🗄️"
+query = "topic:database created:>{since:120d} stars:>50"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+profile = "Substantive databases, query and storage engines, data pipelines, and analytics tooling with real engineering. Favor standalone tools and engines over agent-skill packs."
+
+[[theme]]
+key   = "web"
+name  = "Web & Frontend"
+emoji = "🌐"
+query = "topic:frontend created:>{since:120d} stars:>50"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+profile = "Substantive web and frontend projects — frameworks, build tools, UI toolkits, browsers, rendering — with real utility. Favor standalone tools over design-agent skill packs."
+
+[[theme]]
+key   = "science"
+name  = "Science & Simulation"
+emoji = "🔬"
+query = "topic:scientific-computing created:>{since:180d} stars:>20"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+profile = "Substantive scientific computing and simulation — numerical methods, physics and engineering simulation, scientific ML (PINNs and similar), graphics and compute. Favor real research code and engines."
