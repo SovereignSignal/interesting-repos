@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from datetime import date
 
 from bot.config import expand_since
@@ -56,7 +57,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
 
     # Phase 2 — deliver in themes.toml (display) order. State is recorded only after a
     # theme's messages are all sent (a crash never marks a repo "sent" that wasn't
-    # delivered); we prefer re-sending over losing a repo.
+    # delivered); we prefer re-sending over losing a repo. Messages are spaced by
+    # config.send_delay_seconds so a 10-theme digest trickles instead of flooding.
+    sent_any = False
     for theme in config.themes:
         picked = results.get(theme.key)
         if not picked:
@@ -72,7 +75,10 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                     print("-" * 40)
                 continue
             for m in messages:
+                if sent_any:
+                    time.sleep(config.send_delay_seconds)
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
+                sent_any = True
             state = record_sent(state, theme.key, [r.id for r in picked])
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))

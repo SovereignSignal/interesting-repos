@@ -4,10 +4,10 @@ from bot.config import Config, Theme
 from bot.github import Repo
 
 
-def _cfg(tmp_path, themes):
+def _cfg(tmp_path, themes, delay=0):
     # Config(tg_token, tg_chat, github_token, state_dir, themes, ollama_host=...).
-    # ollama_host="" keeps make_titles/translate/rank offline in tests.
-    return Config("tok", "-100", "", str(tmp_path), themes, "")
+    # ollama_host="" keeps make_titles/translate/rank offline; delay=0 => no real sleep.
+    return Config("tok", "-100", "", str(tmp_path), themes, "", send_delay_seconds=delay)
 
 def _repo(i, stars):
     return Repo(i, f"a/{i}", f"https://x/{i}", "desc", stars, "Py", [], False, False)
@@ -124,3 +124,18 @@ def test_run_cap_n_limits_skill_packs(tmp_path, monkeypatch):
     import json
     saved = json.loads((tmp_path / "state.json").read_text())
     assert sorted(saved["sec"]) == [1, 2, 4]   # at most 2 packs (p1,p2) + non-pack tool; p3 dropped
+
+
+def test_run_throttles_sends_to_avoid_flooding(tmp_path, monkeypatch):
+    slept = []
+    monkeypatch.setattr(main.time, "sleep", lambda s: slept.append(s))
+    sent = []
+    monkeypatch.setattr(main, "search_repos",
+                        lambda query, **k: [_repo(1, 10)] if "AAA" in query else [_repo(2, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    a = Theme(key="a", name="A", emoji="", query="AAA", count=1)
+    b = Theme(key="b", name="B", emoji="", query="BBB", count=1)
+    main.run(_cfg(tmp_path, [a, b], delay=5), today=date(2026, 6, 4))
+    assert len(sent) == 2       # two themes, one message each
+    assert slept == [5]         # exactly one inter-message pause (none before the first send)

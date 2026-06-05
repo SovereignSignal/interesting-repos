@@ -85,3 +85,13 @@ def test_load_themes_agent_skill_cap_zero_is_kept(tmp_path):
     p = tmp_path / "t.toml"
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nagent_skill_cap=0\n')
     assert load_themes(str(p))[0].agent_skill_cap == 0
+
+
+def test_load_config_reads_send_delay_seconds():
+    cfg = load_config(env=_env(SEND_DELAY_SECONDS="7"), themes_path=str(SAMPLE))
+    assert cfg.send_delay_seconds == 7.0
+
+
+def test_load_config_send_delay_defaults_to_throttle():
+    # default is a real pause so a 10-message digest trickles instead of flooding
+    assert load_config(env=_env(), themes_path=str(SAMPLE)).send_delay_seconds == 20.0

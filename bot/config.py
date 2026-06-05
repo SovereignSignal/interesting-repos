@@ -62,6 +62,7 @@ class Config:
     ollama_host: str = "https://ollama.com"
     ollama_model: str = "gemma3:12b"
     ollama_api_key: str = ""
+    send_delay_seconds: float = 0
 
 
 def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Config:
@@ -82,4 +83,5 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),
         ollama_model=env.get("OLLAMA_MODEL", "gemma3:12b"),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
+        send_delay_seconds=float(env.get("SEND_DELAY_SECONDS", "20")),
     )
