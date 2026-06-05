@@ -4,7 +4,7 @@ from datetime import date
 
 from bot.config import expand_since
 from bot.github import search_repos, readme_first_line
-from bot.filters import clean
+from bot.filters import clean, cap_agent_skills
 from bot.ranker import rank
 from bot.formatter import build_messages
 from bot.telegram import send_message
@@ -44,6 +44,7 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
             repos = clean(repos, today, theme.max_idle_days)
             repos = unsent(state, theme.key, repos)
             repos = [r for r in repos if r.id not in claimed]
+            repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = repos[:CANDIDATE_LIMIT]
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
                           ollama_model=config.ollama_model, ollama_api_key=config.ollama_api_key)

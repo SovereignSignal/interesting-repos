@@ -94,3 +94,33 @@ def test_run_catch_all_selected_last_but_delivered_first(tmp_path, monkeypatch):
     assert saved["ai"] == [1, 2]                  # ai selected first, claims shared repo 1
     assert saved["trending"] == [9]               # trending selected last -> repo 1 deduped out
     assert "📈" in sent[0] and "🤖" in sent[1]      # delivered in themes.toml (display) order
+
+
+def test_run_cap_zero_drops_ai_repos(tmp_path, monkeypatch):
+    sent = []
+    ai = Repo(1, "a/gstack", "u1", "Claude Code setup", 100, "Py", [], False, False)
+    nonai = Repo(2, "b/pretext", "u2", "text measurement and layout", 50, "Py", [], False, False)
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [ai, nonai])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="trending", name="T", emoji="📈", query="q", count=5, agent_skill_cap=0)
+    main.run(_cfg(tmp_path, [theme]), today=date(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["trending"] == [2]   # the AI repo (gstack) is dropped by cap=0
+
+
+def test_run_cap_n_limits_skill_packs(tmp_path, monkeypatch):
+    sent = []
+    p1 = Repo(1, "a/one-skills", "u", "skills for agents", 100, "Py", [], False, False)
+    p2 = Repo(2, "b/two-skills", "u", "skill pack", 90, "Py", [], False, False)
+    p3 = Repo(3, "c/three-skills", "u", "agent skill collection", 80, "Py", [], False, False)
+    tool = Repo(4, "d/realdb", "u", "a database engine", 70, "Py", [], False, False)
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [p1, p2, p3, tool])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="sec", name="S", emoji="", query="q", count=5, agent_skill_cap=2)
+    main.run(_cfg(tmp_path, [theme]), today=date(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert sorted(saved["sec"]) == [1, 2, 4]   # at most 2 packs (p1,p2) + non-pack tool; p3 dropped
