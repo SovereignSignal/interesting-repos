@@ -86,3 +86,33 @@ def readme_first_line(full_name: str, token: str = "",
     finally:
         if owns_client:
             client.close()
+
+
+def readme_excerpt(full_name: str, token: str = "",
+                   client: httpx.Client | None = None, max_chars: int = 600) -> str:
+    """The first ~max_chars of real README prose (skipping headings/badges/rules),
+    joined into one line — context for the LLM summarizer. "" on any HTTP error."""
+    headers = {"Accept": "application/vnd.github.raw+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    owns_client = client is None
+    client = client or httpx.Client(timeout=30)
+    try:
+        resp = client.get(f"{_API}/repos/{full_name}/readme", headers=headers)
+        resp.raise_for_status()
+        parts: list[str] = []
+        total = 0
+        for raw in resp.text.splitlines():
+            if _is_noise(raw):
+                continue
+            line = raw.strip()
+            parts.append(line)
+            total += len(line) + 1
+            if total >= max_chars:
+                break
+        return " ".join(parts)[:max_chars].strip()
+    except httpx.HTTPError:
+        return ""
+    finally:
+        if owns_client:
+            client.close()

@@ -88,3 +88,20 @@ def test_parse_repo_reads_timestamps():
 def test_parse_repo_defaults_timestamps_to_empty():
     r = parse_repo({"id": 1, "full_name": "a/b", "html_url": "u"})
     assert r.created_at == "" and r.pushed_at == ""
+
+
+from bot.github import readme_excerpt
+
+
+def test_readme_excerpt_joins_real_lines_up_to_max():
+    body = "# Title\n\n![badge](x)\n\nFirst real line.\nSecond real line.\n"
+    assert readme_excerpt("a/b", client=_readme_client(body)) == "First real line. Second real line."
+
+
+def test_readme_excerpt_truncates_to_max_chars():
+    out = readme_excerpt("a/b", client=_readme_client("word " * 500), max_chars=100)
+    assert len(out) <= 100
+
+
+def test_readme_excerpt_returns_empty_on_error():
+    assert readme_excerpt("a/b", client=_readme_client("nope", status=404)) == ""

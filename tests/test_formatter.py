@@ -64,3 +64,17 @@ def test_build_messages_splits_over_limit():
     msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=titles)
     assert len(msgs) > 1
     assert all(len(m) <= TELEGRAM_LIMIT for m in msgs)
+
+
+def test_build_messages_uses_summary_when_present():
+    repos = [R(1, "a/b", "u", "raw description", 10, "Go")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       summaries=["A clean blurb."])[0]
+    assert "A clean blurb." in m and "raw description" not in m
+
+
+def test_build_messages_falls_back_when_summary_none():
+    repos = [R(1, "a/b", "u", "raw description", 10, "Go")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       summaries=[None])[0]
+    assert "raw description" in m
