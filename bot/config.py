@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 _SINCE_RE = re.compile(r"\{since:(\d+)d\}")
+_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
 def expand_since(query: str, today: date) -> str:
@@ -28,6 +29,7 @@ class Theme:
     catch_all: bool = False
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
+    days: tuple | None = None
 
 
 def load_themes(path: str) -> list[Theme]:
@@ -35,6 +37,8 @@ def load_themes(path: str) -> list[Theme]:
         data = tomllib.load(f)
     themes: list[Theme] = []
     for t in data.get("theme", []):
+        raw_days = t.get("days")
+        days = tuple(_WEEKDAYS[d.lower()] for d in raw_days) if raw_days else None
         themes.append(Theme(
             key=t["key"],
             name=t["name"],
@@ -48,6 +52,7 @@ def load_themes(path: str) -> list[Theme]:
             catch_all=t.get("catch_all", False),
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
+            days=days,
         ))
     return themes
 

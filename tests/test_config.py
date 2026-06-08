@@ -95,3 +95,15 @@ def test_load_config_reads_send_delay_seconds():
 def test_load_config_send_delay_defaults_to_throttle():
     # default is a real pause so a 10-message digest trickles instead of flooding
     assert load_config(env=_env(), themes_path=str(SAMPLE)).send_delay_seconds == 20.0
+
+
+def test_load_themes_parses_days_to_weekday_ints(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ndays=["mon","thu"]\n')
+    assert load_themes(str(p))[0].days == (0, 3)   # Mon=0, Thu=3
+
+
+def test_load_themes_days_absent_is_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].days is None

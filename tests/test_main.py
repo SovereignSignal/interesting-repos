@@ -127,6 +127,33 @@ def test_run_cap_n_limits_skill_packs(tmp_path, monkeypatch):
     assert sorted(saved["sec"]) == [1, 2, 4]   # at most 2 packs (p1,p2) + non-pack tool; p3 dropped
 
 
+def test_run_fires_only_scheduled_themes_for_the_weekday(tmp_path, monkeypatch):
+    sent = []
+    # distinct repos per theme so dedup can't mask the weekday filter
+    monkeypatch.setattr(main, "search_repos",
+                        lambda query, **k: [_repo(1, 10)] if "MON" in query else [_repo(2, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    mon = Theme(key="mon", name="Mon", emoji="", query="MON", count=1, days=(0,))   # Monday
+    tue = Theme(key="tue", name="Tue", emoji="", query="TUE", count=1, days=(1,))   # Tuesday
+    main.run(_cfg(tmp_path, [mon, tue]), today=date(2026, 6, 8))   # 2026-06-08 is a Monday
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert "mon" in saved and "tue" not in saved   # only Monday's theme fired
+    assert len(sent) == 1
+
+
+def test_run_fires_themes_without_days_on_any_weekday(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    always = Theme(key="always", name="A", emoji="", query="q", count=1)   # days=None
+    main.run(_cfg(tmp_path, [always]), today=date(2026, 6, 8))
+    import json
+    assert "always" in json.loads((tmp_path / "state.json").read_text())
+
+
 def test_run_throttles_sends_to_avoid_flooding(tmp_path, monkeypatch):
     slept = []
     monkeypatch.setattr(main.time, "sleep", lambda s: slept.append(s))
