@@ -38,6 +38,8 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
     # Phase 1 — select. Catch-all themes (e.g. Trending) are processed LAST so they
     # cannot duplicate a specific theme's picks; `claimed` enforces one theme per repo.
     for theme in sorted(config.themes, key=lambda t: t.catch_all):
+        if theme.days is not None and today.weekday() not in theme.days:
+            continue  # not scheduled for today's weekday
         try:
             query = expand_since(theme.query, today)
             repos = search_repos(query, sort=theme.sort, order=theme.order,
