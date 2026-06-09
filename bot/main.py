@@ -12,6 +12,7 @@ from bot.telegram import send_message
 from bot.translate import translate_to_english
 from bot.titles import make_titles
 from bot.summaries import make_summaries
+from bot.slack import send_slack_message
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -86,6 +87,7 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
                 if sent_any:
                     time.sleep(config.send_delay_seconds)
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
+                send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
                 sent_any = True
             state = record_sent(state, theme.key, [r.id for r in picked])
             save_state(state_path, state)
