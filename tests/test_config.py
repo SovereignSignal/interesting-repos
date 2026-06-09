@@ -107,3 +107,14 @@ def test_load_themes_days_absent_is_none(tmp_path):
     p = tmp_path / "t.toml"
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
     assert load_themes(str(p))[0].days is None
+
+
+def test_load_config_reads_slack_creds():
+    cfg = load_config(env=_env(SLACK_BOT_TOKEN="xoxb-1", SLACK_CHANNEL_ID="C123"),
+                      themes_path=str(SAMPLE))
+    assert cfg.slack_bot_token == "xoxb-1" and cfg.slack_channel_id == "C123"
+
+
+def test_load_config_slack_creds_default_blank():
+    cfg = load_config(env=_env(), themes_path=str(SAMPLE))
+    assert cfg.slack_bot_token == "" and cfg.slack_channel_id == ""
