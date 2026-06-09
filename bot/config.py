@@ -70,6 +70,7 @@ class Config:
     send_delay_seconds: float = 0
     slack_bot_token: str = ""
     slack_channel_id: str = ""
+    alert_chat_id: str = ""
 
 
 def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Config:
@@ -93,4 +94,5 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         send_delay_seconds=float(env.get("SEND_DELAY_SECONDS", "20")),
         slack_bot_token=env.get("SLACK_BOT_TOKEN", ""),
         slack_channel_id=env.get("SLACK_CHANNEL_ID", ""),
+        alert_chat_id=env.get("ALERT_CHAT_ID", ""),
     )
