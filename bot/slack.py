@@ -21,7 +21,13 @@ class _SlackMrkdwnConverter(HTMLParser):
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def handle_starttag(self, tag, attrs):
-        if tag in ("b", "strong"):
+        if tag == "a":
+            self._in_link = True
+            self._href = dict(attrs).get("href", "") or ""
+            self._link_text = []
+        elif self._in_link:
+            return  # inside a link the label is plain text — ignore nested formatting
+        elif tag in ("b", "strong"):
             self.parts.append("*")
         elif tag in ("i", "em"):
             self.parts.append("_")
@@ -29,19 +35,9 @@ class _SlackMrkdwnConverter(HTMLParser):
             self.parts.append("`")
         elif tag == "br":
             self.parts.append("\n")
-        elif tag == "a":
-            self._in_link = True
-            self._href = dict(attrs).get("href", "") or ""
-            self._link_text = []
 
     def handle_endtag(self, tag):
-        if tag in ("b", "strong"):
-            self.parts.append("*")
-        elif tag in ("i", "em"):
-            self.parts.append("_")
-        elif tag in ("code", "pre"):
-            self.parts.append("`")
-        elif tag == "a":
+        if tag == "a":
             label = "".join(self._link_text).strip()
             href = self._href.strip()
             if href and label:
@@ -53,6 +49,14 @@ class _SlackMrkdwnConverter(HTMLParser):
             self._in_link = False
             self._href = ""
             self._link_text = []
+        elif self._in_link:
+            return
+        elif tag in ("b", "strong"):
+            self.parts.append("*")
+        elif tag in ("i", "em"):
+            self.parts.append("_")
+        elif tag in ("code", "pre"):
+            self.parts.append("`")
 
     def handle_data(self, data):
         if self._in_link:

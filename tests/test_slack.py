@@ -7,12 +7,16 @@ def _client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_html_to_mrkdwn_bold_link_and_entities():
-    html = '<a href="https://x/1"><b>Cool Tool</b></a>\n⭐ 1,500 · Rust\nUses &lt;async&gt; &amp; speed'
+def test_html_to_mrkdwn_header_bold_and_clean_link():
+    # header <b> (outside a link) → *bold*; heading <a><b>title</b></a> → clean <url|title>
+    html = ('🔥 <b>Top Stars</b>\n\n'
+            '<a href="https://x/1"><b>Cool Tool</b></a>\n'
+            '⭐ 1,500 · Rust\nUses &lt;async&gt; &amp; speed')
     md = html_to_mrkdwn(html)
-    assert "<https://x/1|Cool Tool>" in md          # Slack link form
-    assert "*" in md                                # bold markers preserved
-    assert "&lt;async&gt; &amp; speed" in md        # entities re-escaped for Slack
+    assert "*Top Stars*" in md                       # header bold
+    assert "<https://x/1|Cool Tool>" in md           # clean Slack link
+    assert "**<" not in md and "*<https" not in md   # NOT a broken bold-before-link
+    assert "&lt;async&gt; &amp; speed" in md         # entities re-escaped for Slack
     assert "<a href" not in md and "</b>" not in md
 
 
