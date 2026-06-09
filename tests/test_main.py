@@ -169,6 +169,21 @@ def test_run_throttles_sends_to_avoid_flooding(tmp_path, monkeypatch):
     assert slept == [5]         # exactly one inter-message pause (none before the first send)
 
 
+def test_run_mirrors_each_message_to_slack(tmp_path, monkeypatch):
+    sent_tg, sent_slack = [], []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent_tg.append(a[2]) or {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message",
+                        lambda token, channel, m, **k: sent_slack.append((token, channel, m)) or True)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    cfg = Config("tok", "-100", "", str(tmp_path), [theme], "",
+                 slack_bot_token="xoxb", slack_channel_id="C1")
+    main.run(cfg, today=date(2026, 6, 8))
+    assert len(sent_tg) == 1
+    assert sent_slack == [("xoxb", "C1", sent_tg[0])]   # same message, mirrored with the Slack creds
+
+
 def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])

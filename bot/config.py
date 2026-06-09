@@ -68,6 +68,8 @@ class Config:
     ollama_model: str = "gemma3:12b"
     ollama_api_key: str = ""
     send_delay_seconds: float = 0
+    slack_bot_token: str = ""
+    slack_channel_id: str = ""
 
 
 def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Config:
@@ -89,4 +91,6 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         ollama_model=env.get("OLLAMA_MODEL", "gemma3:12b"),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
         send_delay_seconds=float(env.get("SEND_DELAY_SECONDS", "20")),
+        slack_bot_token=env.get("SLACK_BOT_TOKEN", ""),
+        slack_channel_id=env.get("SLACK_CHANNEL_ID", ""),
     )
