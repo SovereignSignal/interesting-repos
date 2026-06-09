@@ -1,9 +1,11 @@
 import argparse
 import logging
 import sys
+from html import escape
 
 from bot.config import load_config
 from bot.main import run
+from bot.alerts import send_alert
 
 
 def _configure_logging() -> None:
@@ -23,7 +25,15 @@ def cli(argv=None) -> int:
 
     _configure_logging()
     config = load_config(themes_path=args.themes)
-    failures = run(config, dry_run=args.dry_run)
+    try:
+        failures = run(config, dry_run=args.dry_run)
+    except Exception as e:
+        # last-resort alert: run() handles degraded/per-theme failures itself, so reaching
+        # here means an unhandled crash. escape() so a message with HTML chars still sends.
+        if not args.dry_run:
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       f"❌ interesting-repos run crashed: {type(e).__name__}: {escape(str(e))}")
+        raise
     return 1 if failures else 0
 
 
