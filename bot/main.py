@@ -13,6 +13,7 @@ from bot.translate import translate_to_english
 from bot.titles import make_titles
 from bot.summaries import make_summaries
 from bot.slack import send_slack_message
+from bot.alerts import llm_reachable, send_alert
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -26,6 +27,9 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
     failures = 0
+    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can alert
+    degraded = (not dry_run and bool(config.ollama_host)
+                and not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key))
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
@@ -96,4 +100,13 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
             failures += 1
             log.exception("theme %s failed during delivery", theme.key)
 
+    if not dry_run:
+        if degraded:
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       "⚠️ interesting-repos: Ollama unreachable/unauthorized — this run is "
+                       "degraded (stars-only picks, no AI titles/blurbs/translation). "
+                       "Check OLLAMA_API_KEY in Railway.")
+        if failures:
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       f"⚠️ interesting-repos: {failures} theme(s) failed this run.")
     return failures

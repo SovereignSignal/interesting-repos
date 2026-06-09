@@ -184,6 +184,35 @@ def test_run_mirrors_each_message_to_slack(tmp_path, monkeypatch):
     assert sent_slack == [("xoxb", "C1", sent_tg[0])]   # same message, mirrored with the Slack creds
 
 
+def test_run_alerts_when_llm_degraded(tmp_path, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: False)   # LLM "down"
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "http://x", alert_chat_id="d")   # ollama_host set => pre-flight runs
+    main.run(cfg, today=date(2026, 6, 8))
+    assert alerts and "Ollama" in alerts[0]
+
+
+def test_run_alerts_on_theme_failures(tmp_path, monkeypatch):
+    alerts = []
+    def boom(*a, **k):
+        raise RuntimeError("search down")
+    monkeypatch.setattr(main, "search_repos", boom)
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = _cfg(tmp_path, [Theme(key="t", name="T", emoji="", query="q", count=1)])  # ollama_host=""
+    main.run(cfg, today=date(2026, 6, 8))
+    assert alerts and "failed" in alerts[0]
+
+
 def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
