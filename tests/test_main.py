@@ -231,3 +231,35 @@ def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 4))
     assert any("LLM blurb here." in m for m in sent)
+
+
+def test_run_quiet_slot_when_nothing_clears_quality_bar(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")   # the "bot" logger defaults to WARNING under pytest
+    sent = []
+    _patch(monkeypatch, [_repo(1, 10)], sent)
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [])   # scored, none above bar
+    theme = Theme(key="t", name="T", emoji="", query="q", count=3)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent == []          # not a failure, no message
+    assert "quality bar" in caplog.text
+
+
+def test_run_passes_curator_whys_to_summaries(tmp_path, monkeypatch):
+    from bot.ranker import Pick
+    seen = {}
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "ex")
+    monkeypatch.setattr(main, "rank",
+                        lambda repos, theme, **k: [Pick(repos[0], "novel rust db")])
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    def fake_summaries(repos, excerpts, whys=None, **k):
+        seen["whys"] = whys
+        return [None]
+    monkeypatch.setattr(main, "make_summaries", fake_summaries)
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 8, 13))
+    assert seen["whys"] == ["novel rust db"]

@@ -27,6 +27,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
+    curator_model = config.ollama_curator_model or config.ollama_model
     failures = 0
     # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can alert
     degraded = (not dry_run and bool(config.ollama_host)
@@ -57,9 +58,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = repos[:CANDIDATE_LIMIT]
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
-                          ollama_model=config.ollama_model, ollama_api_key=config.ollama_api_key)
+                          ollama_model=curator_model, ollama_api_key=config.ollama_api_key)
+            if repos and not picked:
+                log.info("theme %s: %d candidates, none above the quality bar",
+                         theme.key, len(repos))
             results[theme.key] = picked
-            claimed.update(r.id for r in picked)
+            claimed.update(p.repo.id for p in picked)
         except Exception:
             failures += 1
             log.exception("theme %s failed during selection", theme.key)
@@ -75,14 +79,16 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             log.info("theme %s: no new repos", theme.key)
             continue
         try:
+            repos_ = [p.repo for p in picked]
+            whys = [p.why for p in picked]
             summaries = None
             if config.ollama_host:
-                excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in picked]
-                summaries = make_summaries(picked, excerpts, host=config.ollama_host,
-                                           model=config.ollama_model, api_key=config.ollama_api_key)
-            titles = make_titles(picked, host=config.ollama_host,
+                excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in repos_]
+                summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
+                                           model=curator_model, api_key=config.ollama_api_key)
+            titles = make_titles(repos_, host=config.ollama_host,
                                  model=config.ollama_model, api_key=config.ollama_api_key)
-            messages = build_messages(theme, picked, describe, translate, titles, summaries)
+            messages = build_messages(theme, repos_, describe, translate, titles, summaries)
             if dry_run:
                 for m in messages:
                     print(m)
@@ -94,7 +100,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
                 send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
                 sent_any = True
-            state = record_sent(state, theme.key, [r.id for r in picked])
+            state = record_sent(state, theme.key, [p.repo.id for p in picked])
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception:
