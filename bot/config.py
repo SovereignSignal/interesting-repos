@@ -17,7 +17,7 @@ def _parse_at(raw: list) -> tuple:
             day_s, hour_s = entry.split()
             day = _WEEKDAYS[day_s.lower()]
             hour = int(hour_s)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, AttributeError):
             raise SystemExit(f"themes.toml: invalid at entry {entry!r} (want e.g. 'mon 13')")
         if not 0 <= hour <= 23:
             raise SystemExit(f"themes.toml: invalid hour in at entry {entry!r} (0-23)")

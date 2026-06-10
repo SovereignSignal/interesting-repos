@@ -149,3 +149,10 @@ def test_load_themes_at_malformed_entry_exits(tmp_path):
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["mon"]\n')
     with pytest.raises(SystemExit):
         load_themes(str(p))
+
+
+def test_load_themes_at_non_string_entry_exits(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=[13]\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))

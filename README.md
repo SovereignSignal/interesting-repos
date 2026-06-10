@@ -1,7 +1,7 @@
 # Interesting Repos → Telegram
 
-Weekly digest of trending GitHub repos, by theme, posted to a Telegram group.
-Push-only: a script run once a week by Railway cron. No server.
+Digest of trending GitHub repos, by theme, posted to a Telegram group.
+Push-only: a script run by Railway cron three times daily. No server.
 
 ## How it works
 Discover (GitHub Search API "breakout" queries: recently-created, high-star) →
@@ -17,6 +17,9 @@ qualifiers; `{since:Nd}` expands to N days ago. Sorting is the `sort` field, not
 `sort:` qualifier. `rank = "llm"` has an Ollama model curate candidates against the
 theme's `profile` (filtering spam/star-farmed/low-effort repos); `rank = "stars"`
 just takes the top by stars (no AI). LLM curation needs `OLLAMA_*` set (below).
+`at` is a list of `"weekday HH"` slots (e.g. `at = ["mon 13", "thu 16"]`); a theme
+only fires when the current run's UTC weekday and hour match one of its slots. A run
+where no theme matches sends nothing.
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
@@ -47,7 +50,7 @@ python -m bot --dry-run   # print the digest instead of sending
 1. New project from this repo.
 2. Set the env vars from `.env.example` in the service Variables.
 3. Add a **Volume** mounted at `/data` (holds `state.json` for dedup).
-4. The service runs on the cron in `railway.json` (`0 13 * * 1` = Mon 13:00 UTC).
-   Adjust as desired.
+4. The service runs on the cron in `railway.json` (`0 13,16,19 * * *` = three times
+   daily at 13:00, 16:00, 19:00 UTC). Each theme fires only in its `at` slots.
 5. Tip: trigger one run and watch logs; or temporarily set the start command to
    `python -m bot --dry-run` for a safe first run.
