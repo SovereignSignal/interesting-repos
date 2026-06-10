@@ -37,7 +37,7 @@ class Theme:
     key: str
     name: str
     emoji: str
-    query: str
+    query: str | tuple  # one GitHub search query, or several merged+deduped
     sort: str = "stars"
     order: str = "desc"
     count: int = 7
@@ -46,6 +46,7 @@ class Theme:
     catch_all: bool = False
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
+    min_score: int = 6    # curator score a repo must reach to be posted (0-10)
     at: tuple | None = None
 
 
@@ -56,11 +57,13 @@ def load_themes(path: str) -> list[Theme]:
     for t in data.get("theme", []):
         raw_at = t.get("at")
         at = _parse_at(raw_at) if raw_at else None
+        raw_q = t["query"]
+        query = tuple(raw_q) if isinstance(raw_q, list) else raw_q
         themes.append(Theme(
             key=t["key"],
             name=t["name"],
             emoji=t.get("emoji", ""),
-            query=t["query"],
+            query=query,
             sort=t.get("sort", "stars"),
             order=t.get("order", "desc"),
             count=t.get("count", 7),
@@ -69,6 +72,7 @@ def load_themes(path: str) -> list[Theme]:
             catch_all=t.get("catch_all", False),
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
+            min_score=t.get("min_score", 6),
             at=at,
         ))
     return themes
@@ -84,6 +88,7 @@ class Config:
     ollama_host: str = "https://ollama.com"
     ollama_model: str = "gemma3:12b"
     ollama_api_key: str = ""
+    ollama_curator_model: str = ""
     send_delay_seconds: float = 0
     slack_bot_token: str = ""
     slack_channel_id: str = ""
@@ -108,6 +113,7 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),
         ollama_model=env.get("OLLAMA_MODEL", "gemma3:12b"),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
+        ollama_curator_model=env.get("OLLAMA_CURATOR_MODEL", ""),
         send_delay_seconds=float(env.get("SEND_DELAY_SECONDS", "20")),
         slack_bot_token=env.get("SLACK_BOT_TOKEN", ""),
         slack_channel_id=env.get("SLACK_CHANNEL_ID", ""),

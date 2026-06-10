@@ -156,3 +156,37 @@ def test_load_themes_at_non_string_entry_exits(tmp_path):
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=[13]\n')
     with pytest.raises(SystemExit):
         load_themes(str(p))
+
+
+def test_load_themes_min_score_defaults_to_6(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].min_score == 6
+
+
+def test_load_themes_reads_min_score(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nmin_score=8\n')
+    assert load_themes(str(p))[0].min_score == 8
+
+
+def test_load_themes_query_list_becomes_tuple(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery=["q1", "q2"]\n')
+    assert load_themes(str(p))[0].query == ("q1", "q2")
+
+
+def test_load_themes_query_string_stays_string(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q1"\n')
+    assert load_themes(str(p))[0].query == "q1"
+
+
+def test_load_config_reads_curator_model():
+    cfg = load_config(env=_env(OLLAMA_CURATOR_MODEL="qwen3-next:80b"), themes_path=str(SAMPLE))
+    assert cfg.ollama_curator_model == "qwen3-next:80b"
+
+
+def test_load_config_curator_model_defaults_blank():
+    # blank means "use ollama_model" — main resolves the fallback
+    assert load_config(env=_env(), themes_path=str(SAMPLE)).ollama_curator_model == ""
