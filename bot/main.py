@@ -52,9 +52,15 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         if theme.at is not None and (now.weekday(), now.hour) not in theme.at:
             continue  # not scheduled for this weekday+hour slot
         try:
-            query = expand_since(theme.query, today)
-            repos = search_repos(query, sort=theme.sort, order=theme.order,
-                                 token=config.github_token)
+            queries = theme.query if isinstance(theme.query, tuple) else (theme.query,)
+            repos, seen_ids = [], set()
+            for q in queries:
+                for r in search_repos(expand_since(q, today), sort=theme.sort,
+                                      order=theme.order, token=config.github_token):
+                    if r.id not in seen_ids:
+                        seen_ids.add(r.id)
+                        repos.append(r)
+            repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
             repos = clean(repos, today, theme.max_idle_days)
             repos = unsent(state, theme.key, repos)

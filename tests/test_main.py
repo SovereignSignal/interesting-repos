@@ -307,3 +307,18 @@ def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypat
     main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert models == {"rank": "qwen3-next:80b", "summaries": "qwen3-next:80b",
                       "titles": "gemma3:12b"}
+
+
+def test_run_merges_and_dedupes_multi_query_themes(tmp_path, monkeypatch):
+    sent = []
+    def fake_search(query, **k):
+        # both queries surface repo 1; each contributes one unique repo
+        return [_repo(1, 100), _repo(2, 50)] if "QA" in query else [_repo(1, 100), _repo(3, 80)]
+    monkeypatch.setattr(main, "search_repos", lambda query, **k: fake_search(query))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="t", name="T", emoji="", query=("QA", "QB"), count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert sorted(saved["t"]) == [1, 2, 3]   # merged, repo 1 deduped
