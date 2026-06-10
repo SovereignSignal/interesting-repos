@@ -28,6 +28,8 @@ Use Ollama Cloud (`OLLAMA_HOST=https://ollama.com` + `OLLAMA_API_KEY` from
 ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434`, no key).
 Leave `OLLAMA_HOST` blank to disable. English/Latin text is never sent to the model,
 and any translation error falls back to the original text.
+`OLLAMA_CURATOR_MODEL` — optional stronger model for curation scoring and summaries;
+defaults to `OLLAMA_MODEL`.
 
 ## Setup
 1. Create a bot with [@BotFather](https://t.me/BotFather) → `TELEGRAM_BOT_TOKEN`.
