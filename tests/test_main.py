@@ -263,3 +263,47 @@ def test_run_passes_curator_whys_to_summaries(tmp_path, monkeypatch):
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 8, 13))
     assert seen["whys"] == ["novel rust db"]
+
+
+def test_run_alerts_when_curator_model_degraded(tmp_path, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    # base model reachable, curator model not — must still count as degraded
+    monkeypatch.setattr(main, "llm_reachable",
+                        lambda host, model, key: model != "qwen3-next:80b")
+    monkeypatch.setattr(main, "send_alert",
+                        lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "http://x", alert_chat_id="d", ollama_curator_model="qwen3-next:80b")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert alerts and "Ollama" in alerts[0]
+
+
+def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypatch):
+    from bot.ranker import Pick
+    models = {}
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "ex")
+    def fake_rank(repos, theme, ollama_model="", **k):
+        models["rank"] = ollama_model
+        return [Pick(repos[0], "w")]
+    monkeypatch.setattr(main, "rank", fake_rank)
+    def fake_summaries(repos, excerpts, whys=None, model="", **k):
+        models["summaries"] = model
+        return [None]
+    monkeypatch.setattr(main, "make_summaries", fake_summaries)
+    def fake_titles(repos, model="", **k):
+        models["titles"] = model
+        return ["T"]
+    monkeypatch.setattr(main, "make_titles", fake_titles)
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    cfg = Config("tok", "-100", "", str(tmp_path), [theme], "http://x",
+                 ollama_model="gemma3:12b", ollama_curator_model="qwen3-next:80b")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert models == {"rank": "qwen3-next:80b", "summaries": "qwen3-next:80b",
+                      "titles": "gemma3:12b"}

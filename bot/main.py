@@ -29,9 +29,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     state = load_state(state_path)
     curator_model = config.ollama_curator_model or config.ollama_model
     failures = 0
-    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can alert
-    degraded = (not dry_run and bool(config.ollama_host)
-                and not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key))
+    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can
+    # alert. When a separate curator model is configured, ping it too — a 401/missing
+    # curator silently demotes scoring to the stars fallback, the 2026-06-06 incident.
+    degraded = (not dry_run and bool(config.ollama_host) and (
+        not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key)
+        or (curator_model != config.ollama_model
+            and not llm_reachable(config.ollama_host, curator_model, config.ollama_api_key))))
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
