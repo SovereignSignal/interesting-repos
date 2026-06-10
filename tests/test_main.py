@@ -322,3 +322,25 @@ def test_run_merges_and_dedupes_multi_query_themes(tmp_path, monkeypatch):
     import json
     saved = json.loads((tmp_path / "state.json").read_text())
     assert sorted(saved["t"]) == [1, 2, 3]   # merged, repo 1 deduped
+
+
+def test_run_warns_when_slack_mirror_fails(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    cfg = Config("tok", "-100", "", str(tmp_path), [theme], "",
+                 slack_bot_token="xoxb", slack_channel_id="C1")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert "slack mirror failed" in caplog.text.lower()
+
+
+def test_run_no_slack_warning_when_slack_unconfigured(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    sent = []
+    _patch(monkeypatch, [_repo(1, 10)], sent)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert "slack" not in caplog.text.lower()

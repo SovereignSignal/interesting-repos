@@ -109,7 +109,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 if sent_any:
                     time.sleep(config.send_delay_seconds)
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
-                send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
+                mirrored = send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
+                if config.slack_bot_token and config.slack_channel_id and not mirrored:
+                    # the mirror never raises, so a broken token/channel is otherwise invisible
+                    log.warning("theme %s: slack mirror failed (telegram delivered)", theme.key)
                 sent_any = True
             state = record_sent(state, theme.key, [p.repo.id for p in picked])
             save_state(state_path, state)
