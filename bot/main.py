@@ -60,7 +60,8 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                     if r.id not in seen_ids:
                         seen_ids.add(r.id)
                         repos.append(r)
-            repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
+            if len(queries) > 1:
+                repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
             repos = clean(repos, today, theme.max_idle_days)
             repos = unsent(state, theme.key, repos)
