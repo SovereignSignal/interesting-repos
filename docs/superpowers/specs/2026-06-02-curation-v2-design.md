@@ -2,7 +2,6 @@
 
 - **Date:** 2026-06-02
 - **Status:** Draft (brainstorming) — awaiting user review
-- **Owner:** sov@sovereignsignal.com
 - **Builds on:** `2026-05-26-telegram-repo-bot-design.md`
 
 ## 1. Summary

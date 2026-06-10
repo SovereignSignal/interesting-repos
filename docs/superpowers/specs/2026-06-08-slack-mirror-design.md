@@ -2,7 +2,6 @@
 
 - **Date:** 2026-06-08
 - **Status:** Approved (brainstorming)
-- **Owner:** sov@sovereignsignal.com
 - **Reference:** ports `modelbytes`' Slack pattern (`send_slack_post` / `_telegram_html_to_slack_mrkdwn`).
 
 ## 1. Summary

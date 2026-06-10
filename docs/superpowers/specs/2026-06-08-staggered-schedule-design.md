@@ -2,7 +2,6 @@
 
 - **Date:** 2026-06-08
 - **Status:** Approved (brainstorming)
-- **Owner:** sov@sovereignsignal.com
 
 ## 1. Summary
 

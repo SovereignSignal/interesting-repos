@@ -2,7 +2,6 @@
 
 - **Date:** 2026-06-04
 - **Status:** Draft (brainstorming) — awaiting user review
-- **Owner:** sov@sovereignsignal.com
 - **Builds on:** `2026-06-02-curation-v2-design.md` (dedup + recency + spam filters, merged)
 
 ## 1. Summary

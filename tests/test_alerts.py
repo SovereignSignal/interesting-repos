@@ -37,8 +37,8 @@ def test_send_alert_sends_to_chat():
         import json as _json
         captured["body"] = _json.loads(request.content)
         return httpx.Response(200, json={"ok": True})
-    assert send_alert("tok", "394395765", "⚠️ degraded", client=_client(handler)) is True
-    assert captured["body"]["chat_id"] == "394395765"
+    assert send_alert("tok", "123456789", "⚠️ degraded", client=_client(handler)) is True
+    assert captured["body"]["chat_id"] == "123456789"
     assert "degraded" in captured["body"]["text"]
 
 

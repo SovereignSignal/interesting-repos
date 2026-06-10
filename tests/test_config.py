@@ -121,8 +121,8 @@ def test_load_config_slack_creds_default_blank():
 
 
 def test_load_config_reads_alert_chat_id():
-    cfg = load_config(env=_env(ALERT_CHAT_ID="394395765"), themes_path=str(SAMPLE))
-    assert cfg.alert_chat_id == "394395765"
+    cfg = load_config(env=_env(ALERT_CHAT_ID="123456789"), themes_path=str(SAMPLE))
+    assert cfg.alert_chat_id == "123456789"
 
 
 def test_load_config_alert_chat_id_default_blank():

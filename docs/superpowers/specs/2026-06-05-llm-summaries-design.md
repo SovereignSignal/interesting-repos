@@ -2,7 +2,6 @@
 
 - **Date:** 2026-06-05
 - **Status:** Approved (brainstorming)
-- **Owner:** sov@sovereignsignal.com
 - **Supersedes:** the v1 non-goal "No AI-written summaries" (`2026-05-26-telegram-repo-bot-design.md` §2).
 
 ## 1. Summary
