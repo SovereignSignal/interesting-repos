@@ -46,7 +46,6 @@ class Theme:
     catch_all: bool = False
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
-    days: tuple | None = None
     at: tuple | None = None
 
 
@@ -55,8 +54,6 @@ def load_themes(path: str) -> list[Theme]:
         data = tomllib.load(f)
     themes: list[Theme] = []
     for t in data.get("theme", []):
-        raw_days = t.get("days")
-        days = tuple(_WEEKDAYS[d.lower()] for d in raw_days) if raw_days else None
         raw_at = t.get("at")
         at = _parse_at(raw_at) if raw_at else None
         themes.append(Theme(
@@ -72,7 +69,6 @@ def load_themes(path: str) -> list[Theme]:
             catch_all=t.get("catch_all", False),
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
-            days=days,
             at=at,
         ))
     return themes

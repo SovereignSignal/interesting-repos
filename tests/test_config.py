@@ -97,17 +97,6 @@ def test_load_config_send_delay_defaults_to_throttle():
     assert load_config(env=_env(), themes_path=str(SAMPLE)).send_delay_seconds == 20.0
 
 
-def test_load_themes_parses_days_to_weekday_ints(tmp_path):
-    p = tmp_path / "t.toml"
-    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ndays=["mon","thu"]\n')
-    assert load_themes(str(p))[0].days == (0, 3)   # Mon=0, Thu=3
-
-
-def test_load_themes_days_absent_is_none(tmp_path):
-    p = tmp_path / "t.toml"
-    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
-    assert load_themes(str(p))[0].days is None
-
 
 def test_load_config_reads_slack_creds():
     cfg = load_config(env=_env(SLACK_BOT_TOKEN="xoxb-1", SLACK_CHANNEL_ID="C123"),
