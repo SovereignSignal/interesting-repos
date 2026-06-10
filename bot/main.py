@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from datetime import date
+from datetime import datetime, timezone
 
 from bot.config import expand_since
 from bot.github import search_repos, readme_first_line, readme_excerpt
@@ -22,8 +22,9 @@ log = logging.getLogger("bot")
 CANDIDATE_LIMIT = 30
 
 
-def run(config, today: date | None = None, dry_run: bool = False) -> int:
-    today = today or date.today()
+def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
+    now = now or datetime.now(timezone.utc)   # cron hours are UTC; never local time
+    today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
     failures = 0
@@ -43,8 +44,8 @@ def run(config, today: date | None = None, dry_run: bool = False) -> int:
     # Phase 1 — select. Catch-all themes (e.g. Trending) are processed LAST so they
     # cannot duplicate a specific theme's picks; `claimed` enforces one theme per repo.
     for theme in sorted(config.themes, key=lambda t: t.catch_all):
-        if theme.days is not None and today.weekday() not in theme.days:
-            continue  # not scheduled for today's weekday
+        if theme.at is not None and (now.weekday(), now.hour) not in theme.at:
+            continue  # not scheduled for this weekday+hour slot
         try:
             query = expand_since(theme.query, today)
             repos = search_repos(query, sort=theme.sort, order=theme.order,
