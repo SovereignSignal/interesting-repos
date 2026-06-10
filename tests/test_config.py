@@ -127,3 +127,36 @@ def test_load_config_reads_alert_chat_id():
 
 def test_load_config_alert_chat_id_default_blank():
     assert load_config(env=_env(), themes_path=str(SAMPLE)).alert_chat_id == ""
+
+
+def test_load_themes_parses_at_to_weekday_hour_pairs(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["mon 13", "thu 16"]\n')
+    assert load_themes(str(p))[0].at == ((0, 13), (3, 16))   # (weekday, UTC hour)
+
+
+def test_load_themes_at_absent_is_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].at is None
+
+
+def test_load_themes_at_invalid_day_exits(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["funday 13"]\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))
+
+
+def test_load_themes_at_invalid_hour_exits(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["mon 24"]\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))
+
+
+def test_load_themes_at_malformed_entry_exits(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["mon"]\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))

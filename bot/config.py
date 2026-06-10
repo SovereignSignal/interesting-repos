@@ -8,6 +8,23 @@ _SINCE_RE = re.compile(r"\{since:(\d+)d\}")
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
+def _parse_at(raw: list) -> tuple:
+    """Parse ["mon 13", "thu 16"] into ((0, 13), (3, 16)) — (weekday, UTC hour) pairs.
+    Invalid entries fail fast at config load, not mid-run."""
+    slots = []
+    for entry in raw:
+        try:
+            day_s, hour_s = entry.split()
+            day = _WEEKDAYS[day_s.lower()]
+            hour = int(hour_s)
+        except (ValueError, KeyError):
+            raise SystemExit(f"themes.toml: invalid at entry {entry!r} (want e.g. 'mon 13')")
+        if not 0 <= hour <= 23:
+            raise SystemExit(f"themes.toml: invalid hour in at entry {entry!r} (0-23)")
+        slots.append((day, hour))
+    return tuple(slots)
+
+
 def expand_since(query: str, today: date) -> str:
     def repl(m: "re.Match[str]") -> str:
         days = int(m.group(1))
@@ -30,6 +47,7 @@ class Theme:
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
     days: tuple | None = None
+    at: tuple | None = None
 
 
 def load_themes(path: str) -> list[Theme]:
@@ -39,6 +57,8 @@ def load_themes(path: str) -> list[Theme]:
     for t in data.get("theme", []):
         raw_days = t.get("days")
         days = tuple(_WEEKDAYS[d.lower()] for d in raw_days) if raw_days else None
+        raw_at = t.get("at")
+        at = _parse_at(raw_at) if raw_at else None
         themes.append(Theme(
             key=t["key"],
             name=t["name"],
@@ -53,6 +73,7 @@ def load_themes(path: str) -> list[Theme]:
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
             days=days,
+            at=at,
         ))
     return themes
 
