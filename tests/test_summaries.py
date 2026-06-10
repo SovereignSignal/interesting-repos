@@ -52,3 +52,21 @@ def test_make_summaries_blank_blurb_becomes_none():
     out = make_summaries([R("a/x"), R("b/y")], host="http://x", model="m",
                          client=_content_client('["", "Real blurb."]'))
     assert out == [None, "Real blurb."]
+
+
+def test_make_summaries_threads_whys_into_prompt():
+    captured = {}
+    def handler(request):
+        import json as _json
+        captured["p"] = _json.loads(request.content)["messages"][0]["content"]
+        return httpx.Response(200, json={"message": {"content": '["Blurb."]'}})
+    make_summaries([R("a/x")], ["readme text"], whys=["first OSS tool doing Y"],
+                   host="http://x", model="m", client=_client(handler))
+    assert "first OSS tool doing Y" in captured["p"]
+    assert "why" in captured["p"].lower()   # prompt asks for the why-it-matters angle
+
+
+def test_make_summaries_works_without_whys():
+    out = make_summaries([R("a/x")], ["ex"], host="http://x", model="m",
+                         client=_content_client('["Blurb."]'))
+    assert out == ["Blurb."]

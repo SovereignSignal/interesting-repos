@@ -27,10 +27,15 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
+    curator_model = config.ollama_curator_model or config.ollama_model
     failures = 0
-    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can alert
-    degraded = (not dry_run and bool(config.ollama_host)
-                and not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key))
+    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can
+    # alert. When a separate curator model is configured, ping it too — a 401/missing
+    # curator silently demotes scoring to the stars fallback, the 2026-06-06 incident.
+    degraded = (not dry_run and bool(config.ollama_host) and (
+        not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key)
+        or (curator_model != config.ollama_model
+            and not llm_reachable(config.ollama_host, curator_model, config.ollama_api_key))))
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
@@ -47,9 +52,16 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         if theme.at is not None and (now.weekday(), now.hour) not in theme.at:
             continue  # not scheduled for this weekday+hour slot
         try:
-            query = expand_since(theme.query, today)
-            repos = search_repos(query, sort=theme.sort, order=theme.order,
-                                 token=config.github_token)
+            queries = theme.query if isinstance(theme.query, tuple) else (theme.query,)
+            repos, seen_ids = [], set()
+            for q in queries:
+                for r in search_repos(expand_since(q, today), sort=theme.sort,
+                                      order=theme.order, token=config.github_token):
+                    if r.id not in seen_ids:
+                        seen_ids.add(r.id)
+                        repos.append(r)
+            if len(queries) > 1:
+                repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
             repos = clean(repos, today, theme.max_idle_days)
             repos = unsent(state, theme.key, repos)
@@ -57,9 +69,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = repos[:CANDIDATE_LIMIT]
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
-                          ollama_model=config.ollama_model, ollama_api_key=config.ollama_api_key)
+                          ollama_model=curator_model, ollama_api_key=config.ollama_api_key)
+            if repos and not picked:
+                log.info("theme %s: %d candidates, none above the quality bar",
+                         theme.key, len(repos))
             results[theme.key] = picked
-            claimed.update(r.id for r in picked)
+            claimed.update(p.repo.id for p in picked)
         except Exception:
             failures += 1
             log.exception("theme %s failed during selection", theme.key)
@@ -75,14 +90,16 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             log.info("theme %s: no new repos", theme.key)
             continue
         try:
+            repos_ = [p.repo for p in picked]
+            whys = [p.why for p in picked]
             summaries = None
             if config.ollama_host:
-                excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in picked]
-                summaries = make_summaries(picked, excerpts, host=config.ollama_host,
-                                           model=config.ollama_model, api_key=config.ollama_api_key)
-            titles = make_titles(picked, host=config.ollama_host,
+                excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in repos_]
+                summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
+                                           model=curator_model, api_key=config.ollama_api_key)
+            titles = make_titles(repos_, host=config.ollama_host,
                                  model=config.ollama_model, api_key=config.ollama_api_key)
-            messages = build_messages(theme, picked, describe, translate, titles, summaries)
+            messages = build_messages(theme, repos_, describe, translate, titles, summaries)
             if dry_run:
                 for m in messages:
                     print(m)
@@ -94,7 +111,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 send_message(config.telegram_bot_token, config.telegram_chat_id, m)
                 send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
                 sent_any = True
-            state = record_sent(state, theme.key, [r.id for r in picked])
+            state = record_sent(state, theme.key, [p.repo.id for p in picked])
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception:

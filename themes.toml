@@ -1,7 +1,8 @@
 # Each [[theme]] fires in its `at` slots (["mon 13", ...] = weekday + UTC hour, one
 # theme per slot) and becomes one Telegram message per firing, in the order below.
 #
-# query:   GitHub Search qualifiers. {since:Nd} expands to the date N days ago.
+# query:   GitHub Search qualifiers — a string or a LIST of strings (results merged,
+#          deduped). {since:Nd} expands to the date N days ago.
 #          We use "breakout" queries — created in the last N days, sorted by stars —
 #          which surface what's *trending now*, not the all-time famous repos.
 #          Sorting is the `sort` field, NOT a sort: qualifier. Multiple topic:
@@ -29,7 +30,7 @@ profile = "Breakout projects from the last few months that a broad developer aud
 key   = "ai-agents"
 name  = "AI & Agents"
 emoji = "🤖"
-query = "topic:ai-agents created:>{since:90d}"
+query = ["topic:ai-agents created:>{since:90d}", "topic:llm created:>{since:90d}"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -40,7 +41,7 @@ profile = "Substantive AI agent frameworks, LLM applications, RAG/eval tooling, 
 key   = "dev-tools"
 name  = "Dev Tools & CLI"
 emoji = "🛠️"
-query = "topic:cli created:>{since:90d}"
+query = ["topic:cli created:>{since:90d}", "topic:developer-tools created:>{since:90d}", "topic:terminal created:>{since:90d}"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -52,7 +53,7 @@ profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and d
 key   = "crypto"
 name  = "Crypto & Web3"
 emoji = "⛓️"
-query = "topic:web3 created:>{since:120d}"
+query = ["topic:web3 created:>{since:120d}", "topic:blockchain created:>{since:120d}"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -76,7 +77,7 @@ profile = "Serious quantitative finance, algorithmic trading, market-data, and f
 key   = "security"
 name  = "Security"
 emoji = "🔐"
-query = "topic:security created:>{since:120d}"
+query = ["topic:security created:>{since:120d}", "topic:cybersecurity created:>{since:120d}"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -100,7 +101,7 @@ profile = "Substantive systems & low-level work — languages, compilers, runtim
 key   = "data"
 name  = "Data & Databases"
 emoji = "🗄️"
-query = "topic:database created:>{since:120d} stars:>50"
+query = ["topic:database created:>{since:120d} stars:>50", "topic:data-engineering created:>{since:120d} stars:>50"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -112,7 +113,7 @@ profile = "Substantive databases, query and storage engines, data pipelines, and
 key   = "web"
 name  = "Web & Frontend"
 emoji = "🌐"
-query = "topic:frontend created:>{since:120d} stars:>50"
+query = ["topic:frontend created:>{since:120d} stars:>50", "topic:webdev created:>{since:120d} stars:>50"]
 sort  = "stars"
 count = 7
 rank  = "llm"
