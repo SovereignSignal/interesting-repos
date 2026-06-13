@@ -4,22 +4,41 @@ Digest of trending GitHub repos, by theme, posted to a Telegram group.
 Push-only: a script run by Railway cron three times daily. No server.
 
 ## How it works
-Discover (GitHub Search API "breakout" queries: recently-created, high-star) →
-curate (an Ollama model picks the most interesting and filters spam/star-farms for
-`rank=llm` themes; else top-by-stars) → format (repo's own description,
-README-first-line fallback, non-English text translated to English via Ollama) →
-post one message per theme → remember sent repos so nothing repeats. See
+Discover (GitHub Search API "breakout" queries: recently-created, high-star; a theme
+may merge several queries) → pre-filter (deterministic spam/stale/agent-skill-cap
+drops) → curate (for `rank=llm` themes an Ollama model **scores every candidate 0–10**
+against the theme's `profile` and writes a one-line "why"; code keeps only scores at or
+above `min_score`, so a thin pool posts fewer repos — or none — rather than padding;
+else top-by-stars) → summarize (an LLM blurb of *what it is + why it's notable*, with
+the repo's own description / README-first-line as fallback; non-English text translated
+to English) → post one message per theme → remember sent repos so nothing repeats. See
 `docs/superpowers/specs/` and `docs/superpowers/plans/` for the full design.
 
+**Graceful degradation is the core design rule:** every LLM call falls back silently
+(stars-sort, raw descriptions, original text) so a missing/broken Ollama key never
+crashes a run — it just produces a worse digest. Because that hides outages, a
+pre-flight health-check DMs an alert when the LLM is unreachable (see `bot/alerts.py`).
+
 ## Themes
-Edit `themes.toml`. Each `[[theme]]` is one message. `query` uses GitHub Search
-qualifiers; `{since:Nd}` expands to N days ago. Sorting is the `sort` field, not a
-`sort:` qualifier. `rank = "llm"` has an Ollama model curate candidates against the
-theme's `profile` (filtering spam/star-farmed/low-effort repos); `rank = "stars"`
-just takes the top by stars (no AI). LLM curation needs `OLLAMA_*` set (below).
-`at` is a list of `"weekday HH"` slots (e.g. `at = ["mon 13", "thu 16"]`); a theme
-only fires when the current run's UTC weekday and hour match one of its slots. A run
-where no theme matches sends nothing.
+Edit `themes.toml`. Each `[[theme]]` is one message. `query` is a GitHub Search
+qualifier string **or a list of strings** (results merged + deduped by repo id);
+`{since:Nd}` expands to N days ago. Sorting is the `sort` field, not a `sort:`
+qualifier. `rank = "llm"` has an Ollama model score candidates against the theme's
+`profile`; `min_score` (default 6) is the bar a repo must clear to be posted — raise
+it to be stricter, lower it if a theme runs too sparse. `rank = "stars"` just takes
+the top by stars (no AI). `count` caps the posts. `agent_skill_cap` limits agent-skill
+*packs* (0 = drop all AI repos, used by Trending; N = at most N packs). LLM curation
+needs `OLLAMA_*` set (below). `at` is a list of `"weekday HH"` slots (e.g.
+`at = ["mon 13", "thu 16"]`, UTC); a theme fires only when the run's UTC weekday and
+hour match one of its slots. The grid assigns one theme per slot, so each cron run (one
+UTC hour) posts a single theme; a run where no theme matches sends nothing.
+
+## Where it posts
+`TELEGRAM_CHAT_ID` is the primary target (a channel or group). If `SLACK_BOT_TOKEN` +
+`SLACK_CHANNEL_ID` are set, every message is also mirrored to Slack (`bot/slack.py`
+converts the Telegram-HTML to mrkdwn); Slack is best-effort and never blocks a run, but
+a mirror failure now logs a WARNING. `ALERT_CHAT_ID` is a **separate** DM target used
+only for failure/degradation alerts — never for digest content.
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
