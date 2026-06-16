@@ -88,7 +88,7 @@ class Config:
     ollama_host: str = "https://ollama.com"
     ollama_model: str = "gemma3:12b"
     ollama_api_key: str = ""
-    ollama_curator_model: str = ""
+    ollama_curator_models: tuple = ()   # ordered curator candidates; first reachable wins
     send_delay_seconds: float = 0
     slack_bot_token: str = ""
     slack_channel_id: str = ""
@@ -113,7 +113,8 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),
         ollama_model=env.get("OLLAMA_MODEL", "gemma3:12b"),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
-        ollama_curator_model=env.get("OLLAMA_CURATOR_MODEL", ""),
+        ollama_curator_models=tuple(
+            m.strip() for m in env.get("OLLAMA_CURATOR_MODEL", "").split(",") if m.strip()),
         send_delay_seconds=float(env.get("SEND_DELAY_SECONDS", "20")),
         slack_bot_token=env.get("SLACK_BOT_TOKEN", ""),
         slack_channel_id=env.get("SLACK_CHANNEL_ID", ""),

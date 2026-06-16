@@ -47,8 +47,12 @@ Use Ollama Cloud (`OLLAMA_HOST=https://ollama.com` + `OLLAMA_API_KEY` from
 ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434`, no key).
 Leave `OLLAMA_HOST` blank to disable. English/Latin text is never sent to the model,
 and any translation error falls back to the original text.
-`OLLAMA_CURATOR_MODEL` — optional stronger model for curation scoring and summaries;
-defaults to `OLLAMA_MODEL`.
+`OLLAMA_CURATOR_MODEL` — stronger model(s) for curation scoring and summaries. Set a
+comma-separated list (e.g. `deepseek-v3.1:671b,gpt-oss:120b`) for an ordered fallback
+chain: at startup the bot picks the first reachable one, and if all are down it falls
+back to `OLLAMA_MODEL`, then to stars-only. A retired or unauthorized primary self-heals
+to the next model (with a heads-up alert) instead of degrading the whole run. Blank ⇒
+curate with `OLLAMA_MODEL`.
 
 ## Setup
 1. Create a bot with [@BotFather](https://t.me/BotFather) → `TELEGRAM_BOT_TOKEN`.

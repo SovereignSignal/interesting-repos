@@ -40,9 +40,14 @@ Trending sweeps the remainder):
   once degraded prod with no crash and no alert (2026-06-06). `bot/alerts.llm_reachable` now
   pre-flight pings the LLM and DMs an alert; it pings **both** `ollama_model` and `curator_model`
   when they differ (a broken curator is the easiest silent failure).
-- **Curator model split:** `curator_model = config.ollama_curator_model or config.ollama_model`
-  drives `rank()` + `make_summaries`; **titles and translation stay on `ollama_model`**. Prod runs
-  `OLLAMA_CURATOR_MODEL=qwen3-next:80b` (sharper curation) with `gemma3:12b` as the base.
+- **Curator model split + fallback chain:** `alerts.resolve_curator` walks
+  `OLLAMA_CURATOR_MODEL` (a comma-list of candidates) at pre-flight, picks the first reachable,
+  and appends `OLLAMA_MODEL` as the final rung; the chosen model drives `rank()` + `make_summaries`
+  while **titles and translation always stay on `OLLAMA_MODEL`**. A retired/401 primary self-heals
+  to the next candidate (heads-up DM, run not degraded); only an all-down chain is stars-only +
+  degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v3.1:671b,gpt-oss:120b` with `gemma3:12b` base.
+  (Ollama Cloud retires models with little notice — `qwen3-next:80b` was pulled 2026-06-16, which
+  is why the fallback chain exists; on a degraded/heads-up alert, probe the model for HTTP 410.)
 - **Never log at INFO around sends.** httpx logs request URLs at INFO and the Telegram token sits in
   the URL path — `__main__._configure_logging` raises httpx/httpcore to WARNING to keep it out of logs.
 - **`ALERT_CHAT_ID` is a DM and is alerts-only** — never digest content. Digests go to `TELEGRAM_CHAT_ID`
@@ -52,7 +57,8 @@ Trending sweeps the remainder):
 
 Env vars (`bot/config.load_config`): **required** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 Optional: `GITHUB_TOKEN`, `STATE_DIR` (=`/data`), `OLLAMA_HOST` (=`https://ollama.com`),
-`OLLAMA_MODEL` (=`gemma3:12b`), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (blank ⇒ `OLLAMA_MODEL`),
+`OLLAMA_MODEL` (=`gemma3:12b`), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
+candidates, first reachable wins, base model is the final rung; blank ⇒ curate with `OLLAMA_MODEL`),
 `SEND_DELAY_SECONDS` (=20, spaces messages within a run), `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
 `ALERT_CHAT_ID`. Leave `OLLAMA_HOST` blank to disable all LLM features.
 

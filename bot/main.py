@@ -13,7 +13,7 @@ from bot.translate import translate_to_english
 from bot.titles import make_titles
 from bot.summaries import make_summaries
 from bot.slack import send_slack_message
-from bot.alerts import llm_reachable, send_alert
+from bot.alerts import resolve_curator, send_alert
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -27,15 +27,17 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
-    curator_model = config.ollama_curator_model or config.ollama_model
     failures = 0
-    # pre-flight: detect a degraded LLM up front (the silent-failure case) so we can
-    # alert. When a separate curator model is configured, ping it too — a 401/missing
-    # curator silently demotes scoring to the stars fallback, the 2026-06-06 incident.
-    degraded = (not dry_run and bool(config.ollama_host) and (
-        not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key)
-        or (curator_model != config.ollama_model
-            and not llm_reachable(config.ollama_host, curator_model, config.ollama_api_key))))
+    # pre-flight: resolve the curator by walking OLLAMA_CURATOR_MODEL's candidates (first
+    # reachable wins), falling back to the base model as the final rung. A retired/401
+    # primary (the 2026-06-06 and -06-16 incidents) self-heals to a working model instead
+    # of degrading the whole run; only an all-down chain (curator_model is None, which
+    # implies the base is down too) is a genuinely stars-only, degraded run.
+    curator_model, curator_skipped = (
+        resolve_curator(config.ollama_host, config.ollama_curator_models,
+                        config.ollama_model, config.ollama_api_key)
+        if config.ollama_host else (None, []))
+    degraded = not dry_run and bool(config.ollama_host) and curator_model is None
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
@@ -69,7 +71,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = repos[:CANDIDATE_LIMIT]
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
-                          ollama_model=curator_model, ollama_api_key=config.ollama_api_key)
+                          ollama_model=curator_model or "", ollama_api_key=config.ollama_api_key)
             if repos and not picked:
                 log.info("theme %s: %d candidates, none above the quality bar",
                          theme.key, len(repos))
@@ -96,7 +98,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             if config.ollama_host:
                 excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in repos_]
                 summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
-                                           model=curator_model, api_key=config.ollama_api_key)
+                                           model=curator_model or "", api_key=config.ollama_api_key)
             titles = make_titles(repos_, host=config.ollama_host,
                                  model=config.ollama_model, api_key=config.ollama_api_key)
             messages = build_messages(theme, repos_, describe, translate, titles, summaries)
@@ -127,6 +129,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                        "⚠️ interesting-repos: Ollama unreachable/unauthorized — this run is "
                        "degraded (stars-only picks, no AI titles/blurbs/translation). "
                        "Check OLLAMA_API_KEY in Railway.")
+        elif curator_skipped and curator_model:
+            # primary curator(s) were down but a fallback worked — the run is fully curated,
+            # just on a backup model; nudge Sov to fix the config (e.g. a retired model).
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       f"⚠️ interesting-repos: curator model(s) {', '.join(curator_skipped)} "
+                       f"unavailable — ran on {curator_model}. "
+                       "Update OLLAMA_CURATOR_MODEL in Railway.")
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: {failures} theme(s) failed this run.")

@@ -182,11 +182,19 @@ def test_load_themes_query_string_stays_string(tmp_path):
     assert load_themes(str(p))[0].query == "q1"
 
 
-def test_load_config_reads_curator_model():
-    cfg = load_config(env=_env(OLLAMA_CURATOR_MODEL="qwen3-next:80b"), themes_path=str(SAMPLE))
-    assert cfg.ollama_curator_model == "qwen3-next:80b"
+def test_load_config_reads_curator_models_as_comma_list():
+    cfg = load_config(env=_env(OLLAMA_CURATOR_MODEL="deepseek-v3.1:671b, gpt-oss:120b"),
+                      themes_path=str(SAMPLE))
+    assert cfg.ollama_curator_models == ("deepseek-v3.1:671b", "gpt-oss:120b")   # trimmed
 
 
-def test_load_config_curator_model_defaults_blank():
-    # blank means "use ollama_model" — main resolves the fallback
-    assert load_config(env=_env(), themes_path=str(SAMPLE)).ollama_curator_model == ""
+def test_load_config_curator_models_single_value():
+    cfg = load_config(env=_env(OLLAMA_CURATOR_MODEL="deepseek-v3.1:671b"), themes_path=str(SAMPLE))
+    assert cfg.ollama_curator_models == ("deepseek-v3.1:671b",)
+
+
+def test_load_config_curator_models_default_empty():
+    # unset (and blank/whitespace-only) yields an empty tuple — base model is the curator
+    assert load_config(env=_env(), themes_path=str(SAMPLE)).ollama_curator_models == ()
+    assert load_config(env=_env(OLLAMA_CURATOR_MODEL=" , "),
+                       themes_path=str(SAMPLE)).ollama_curator_models == ()
