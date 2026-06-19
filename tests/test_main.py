@@ -1,7 +1,12 @@
-from datetime import datetime
+from datetime import datetime, date
 import bot.main as main
 from bot.config import Config, Theme
 from bot.github import Repo
+from bot import starsnap
+
+
+def _seed_snapshot(tmp_path, day, mapping):
+    starsnap.save_snapshot(str(tmp_path), day, mapping)
 
 
 def _cfg(tmp_path, themes, delay=0, ollama=""):
@@ -371,3 +376,70 @@ def test_run_no_slack_warning_when_slack_unconfigured(tmp_path, monkeypatch, cap
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
     assert "slack" not in caplog.text.lower()
+
+
+def test_run_writes_a_snapshot_of_searched_repos(tmp_path, monkeypatch):
+    _patch(monkeypatch, [_repo(1, 250), _repo(2, 60)], [])
+    theme = Theme(key="t", name="T", emoji="", query="q", count=2)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    snap = starsnap.load_snapshot(str(tmp_path), date(2026, 6, 8))
+    assert snap == {1: 250, 2: 60}
+
+
+def test_run_dry_run_writes_no_snapshot(tmp_path, monkeypatch):
+    _patch(monkeypatch, [_repo(1, 10)], [])
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13), dry_run=True)
+    assert not (tmp_path / "starsnap").exists()
+
+
+def test_run_snapshot_unions_across_themes_in_one_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "search_repos",
+                        lambda query, **k: [_repo(1, 10)] if "AAA" in query else [_repo(2, 20)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    a = Theme(key="a", name="A", emoji="", query="AAA", count=1)
+    b = Theme(key="b", name="B", emoji="", query="BBB", count=1)
+    main.run(_cfg(tmp_path, [a, b]), now=datetime(2026, 6, 8, 13))
+    snap = starsnap.load_snapshot(str(tmp_path), date(2026, 6, 8))
+    assert snap == {1: 10, 2: 20}
+
+
+def test_run_delta_theme_orders_candidates_by_growth_and_drops_unbaselined(tmp_path, monkeypatch):
+    # baseline a week ago: repo 1 grew most (100->250), repo 3 has no baseline
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100, 2: 50})
+    seen = {}
+    def fake_rank(repos, theme, **k):
+        seen["order"] = [r.id for r in repos]
+        from bot.ranker import Pick
+        return [Pick(r) for r in repos[:2]]
+    monkeypatch.setattr(main, "search_repos",
+                        lambda *a, **k: [_repo(3, 9999), _repo(1, 250), _repo(2, 60)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", fake_rank)
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="m", name="M", emoji="🚀", query="q", count=2, delta_days=7)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert seen["order"] == [1, 2]      # delta 150, 10; repo 3 (no baseline) dropped
+
+
+def test_run_delta_theme_annotates_growth_in_message(tmp_path, monkeypatch):
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})   # grew 100 -> 250 (+150)
+    sent = []
+    from bot.ranker import Pick
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 250)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="m", name="M", emoji="🚀", query="q", count=1, delta_days=7)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert any("+150★ this week" in m for m in sent)
+
+
+def test_run_delta_theme_cold_start_is_quiet(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    sent = []
+    _patch(monkeypatch, [_repo(1, 250), _repo(2, 60)], sent)   # no baseline seeded
+    theme = Theme(key="m", name="M", emoji="🚀", query="q", count=2, delta_days=7)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent == []            # quiet slot, no failure, no alert

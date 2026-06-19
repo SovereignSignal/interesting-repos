@@ -1,13 +1,15 @@
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 from bot.config import expand_since
 from bot.github import search_repos, readme_first_line, readme_excerpt
 from bot.filters import clean, cap_agent_skills
 from bot.ranker import rank
 from bot.formatter import build_messages
+from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
+                          order_by_delta, retain)
 from bot.telegram import send_message
 from bot.translate import translate_to_english
 from bot.titles import make_titles
@@ -27,6 +29,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
+    # Movers store: every theme folds the repos it searches into today's snapshot.
+    # A delta theme (theme.delta_days set) sources candidates by week-over-week growth.
+    today_snap = load_snapshot(config.state_dir, today)
+    baselines: dict = {}     # theme.key -> baseline {repo_id: stars} (delta themes only)
     failures = 0
     # pre-flight: resolve the curator by walking OLLAMA_CURATOR_MODEL's candidates (first
     # reachable wins), falling back to the base model as the final rung. A retired/401
@@ -65,6 +71,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             if len(queries) > 1:
                 repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
+            for r in repos:
+                today_snap[r.id] = r.stars      # feed the Movers store (every theme, every run)
+            if theme.delta_days:                # source candidates by N-day star growth
+                baseline = find_baseline(config.state_dir, today, theme.delta_days)
+                repos = order_by_delta(repos, baseline)   # drops repos with no prior snapshot
+                baselines[theme.key] = baseline
             repos = clean(repos, today, theme.max_idle_days)
             repos = unsent(state, theme.key, repos)
             repos = [r for r in repos if r.id not in claimed]
@@ -80,6 +92,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         except Exception:
             failures += 1
             log.exception("theme %s failed during selection", theme.key)
+
+    # Persist today's snapshot once after selection (never in a dry-run, which mutates
+    # nothing). Retention keeps ~2x the delta window so a missed cron day is survivable.
+    if not dry_run:
+        save_snapshot(config.state_dir, today, today_snap)
+        retain(config.state_dir, today)
 
     # Phase 2 — deliver in themes.toml (display) order. State is recorded only after a
     # theme's messages are all sent (a crash never marks a repo "sent" that wasn't
@@ -101,7 +119,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                                            model=curator_model or "", api_key=config.ollama_api_key)
             titles = make_titles(repos_, host=config.ollama_host,
                                  model=config.ollama_model, api_key=config.ollama_api_key)
-            messages = build_messages(theme, repos_, describe, translate, titles, summaries)
+            deltas = None
+            if theme.delta_days:    # annotate the meta line with '+N★ this week'
+                base = baselines.get(theme.key, {})
+                deltas = [r.stars - base.get(r.id, r.stars) for r in repos_]
+            messages = build_messages(theme, repos_, describe, translate, titles,
+                                      summaries, deltas)
             if dry_run:
                 for m in messages:
                     print(m)

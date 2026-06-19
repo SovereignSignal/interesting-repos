@@ -198,3 +198,15 @@ def test_load_config_curator_models_default_empty():
     assert load_config(env=_env(), themes_path=str(SAMPLE)).ollama_curator_models == ()
     assert load_config(env=_env(OLLAMA_CURATOR_MODEL=" , "),
                        themes_path=str(SAMPLE)).ollama_curator_models == ()
+
+
+def test_load_themes_delta_days_defaults_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].delta_days is None
+
+
+def test_load_themes_reads_delta_days(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ndelta_days=7\n')
+    assert load_themes(str(p))[0].delta_days == 7

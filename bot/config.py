@@ -47,6 +47,7 @@ class Theme:
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
     min_score: int = 6    # curator score a repo must reach to be posted (0-10)
+    delta_days: int | None = None   # set => source candidates by N-day star growth (Movers)
     at: tuple | None = None
 
 
@@ -73,6 +74,7 @@ def load_themes(path: str) -> list[Theme]:
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
             min_score=t.get("min_score", 6),
+            delta_days=t.get("delta_days"),
             at=at,
         ))
     return themes

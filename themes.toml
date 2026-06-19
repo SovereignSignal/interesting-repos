@@ -10,6 +10,9 @@
 # rank:    "stars" (top by stars, no AI) or "llm" (an Ollama model curates against
 #          `profile`, filtering spam / star-farmed / low-effort repos).
 # profile: what "interesting" means for this theme; guides the LLM curator.
+# delta_days: set (e.g. 7) to source candidates by N-day star growth instead of
+#             leaving them in search-stars order — repos with no prior snapshot
+#             are dropped (the weekly Movers digest uses this). Optional.
 #
 # LLM curation + non-English translation both use Ollama (set OLLAMA_* env vars).
 
@@ -132,3 +135,17 @@ rank  = "llm"
 agent_skill_cap = 2
 at = ["thu 19", "sun 16"]
 profile = "Substantive scientific computing and simulation — numerical methods, physics and engineering simulation, scientific ML (PINNs and similar), graphics and compute. Favor real research code and engines."
+
+[[theme]]
+key   = "movers"
+name  = "This Week's Movers"
+emoji = "🚀"
+query = "created:>{since:120d} stars:>500"
+sort  = "stars"
+count = 7
+rank  = "llm"
+delta_days = 7
+agent_skill_cap = 2          # keep a real viral AI tool, cut clone/skill packs
+min_score = 7               # higher bar — we're featuring "what blew up"
+at = ["sun 19"]             # the grid's only empty slot — one firing/week
+profile = "Real breakouts with genuine momentum this week — repos whose star growth reflects substance (a novel tool, an inflection point, a real release), not manufactured hype. Aggressively discount anything whose velocity looks bought or coordinated, agent-skill clone packs, and forks riding a parent's fame. If the growth is real but the project is thin, it is not a mover."
