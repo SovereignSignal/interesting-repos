@@ -78,3 +78,45 @@ def test_build_messages_falls_back_when_summary_none():
     m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
                        summaries=[None])[0]
     assert "raw description" in m
+
+
+from bot.formatter import _format_delta
+
+
+def test_format_delta_compact_above_thousand():
+    assert _format_delta(1234) == "+1.2k★ this week"
+    assert _format_delta(1000) == "+1.0k★ this week"
+    assert _format_delta(12345) == "+12.3k★ this week"
+
+
+def test_format_delta_plain_below_thousand():
+    assert _format_delta(999) == "+999★ this week"
+    assert _format_delta(1) == "+1★ this week"
+
+
+def test_format_delta_none_for_non_growth():
+    assert _format_delta(0) is None
+    assert _format_delta(-5) is None
+
+
+def test_build_messages_deltas_none_is_identical_to_today():
+    repos = [R(1, "a/b", "u", "d", 1500, "Rust")]
+    plain = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"])[0]
+    no_deltas = build_messages(_theme(), repos, describe=lambda r: "",
+                               titles=["T"], deltas=None)[0]
+    assert plain == no_deltas
+
+
+def test_build_messages_shows_growth_annotation_when_delta_present():
+    repos = [R(1, "a/b", "https://x/1", "d", 1500, "Rust")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       deltas=[1234])[0]
+    assert "⭐ 1,500 · +1.2k★ this week · Rust · a/b" in m
+
+
+def test_build_messages_none_delta_entry_is_unannotated():
+    repos = [R(1, "a/b", "u", "d", 10, "Go")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       deltas=[None])[0]
+    assert "this week" not in m
+    assert "⭐ 10 · Go · a/b" in m
