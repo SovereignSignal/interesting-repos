@@ -443,3 +443,18 @@ def test_run_delta_theme_cold_start_is_quiet(tmp_path, monkeypatch, caplog):
     theme = Theme(key="m", name="M", emoji="🚀", query="q", count=2, delta_days=7)
     failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
     assert failures == 0 and sent == []            # quiet slot, no failure, no alert
+
+
+def test_run_survives_snapshot_write_failure(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    sent = []
+    _patch(monkeypatch, [_repo(1, 10)], sent)
+    # the snapshot store is DISPOSABLE — a write failure must never break the digest
+    def boom(state_dir, day, mapping):
+        raise OSError("disk full")
+    monkeypatch.setattr(main, "save_snapshot", boom)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert failures == 0           # not counted as a theme failure
+    assert len(sent) == 1          # Phase 2 still delivered
+    assert "snapshot" in caplog.text.lower()   # warned, not crashed
