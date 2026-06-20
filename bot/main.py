@@ -94,10 +94,17 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             log.exception("theme %s failed during selection", theme.key)
 
     # Persist today's snapshot once after selection (never in a dry-run, which mutates
-    # nothing). Retention keeps ~2x the delta window so a missed cron day is survivable.
+    # nothing). The store is DISPOSABLE, so a write/retain failure must NEVER take down
+    # the digest — warn and proceed to delivery. (A persistent disk problem also surfaces
+    # via state.json's save in Phase 2, which is already counted as a theme failure and
+    # alerted; a transient hiccup here is within Movers' tolerance window, so no alert.)
     if not dry_run:
-        save_snapshot(config.state_dir, today, today_snap)
-        retain(config.state_dir, today)
+        try:
+            save_snapshot(config.state_dir, today, today_snap)
+            retain(config.state_dir, today)
+        except Exception:
+            log.warning("snapshot store write/retain failed; delivery proceeds",
+                        exc_info=True)
 
     # Phase 2 — deliver in themes.toml (display) order. State is recorded only after a
     # theme's messages are all sent (a crash never marks a repo "sent" that wasn't
