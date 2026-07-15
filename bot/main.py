@@ -15,7 +15,7 @@ from bot.translate import translate_to_english
 from bot.titles import make_titles
 from bot.summaries import make_summaries
 from bot.slack import send_slack_message
-from bot.alerts import resolve_curator, send_alert
+from bot.alerts import resolve_curator, send_alert, llm_reachable
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -44,6 +44,16 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                         config.ollama_model, config.ollama_api_key)
         if config.ollama_host else (None, []))
     degraded = not dry_run and bool(config.ollama_host) and curator_model is None
+    # The base model (OLLAMA_MODEL) drives titles + translation DIRECTLY, outside the curator
+    # chain. resolve_curator only pings it as the chain's last rung, so a curator that resolves
+    # on an earlier rung leaves the base UNVERIFIED — a retired base (the 2026-07-15 gemma3:12b
+    # retirement) then silently degrades titles/translation to deterministic fallbacks with no
+    # alert. Ping it independently when the chosen curator isn't already the base. Skip when
+    # degraded (whole run is stars-only anyway) or when curator IS the base (already reachable).
+    base_model_down = (
+        not dry_run and bool(config.ollama_host) and not degraded
+        and curator_model != config.ollama_model
+        and not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key))
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
@@ -166,6 +176,15 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                        f"⚠️ interesting-repos: curator model(s) {', '.join(curator_skipped)} "
                        f"unavailable — ran on {curator_model}. "
                        "Update OLLAMA_CURATOR_MODEL in Railway.")
+        if base_model_down:
+            # the base model (titles + translation) is down but curation is fine — the run is
+            # NOT degraded, just shipping deterministic titles and untranslated text. Independent
+            # of the curator branch above: both can fire (a fallback curator AND a dead base).
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       f"⚠️ interesting-repos: base model {config.ollama_model} unavailable — "
+                       "titles and translation fell back to deterministic output "
+                       f"(curation unaffected on {curator_model}). "
+                       "Update OLLAMA_MODEL in Railway.")
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: {failures} theme(s) failed this run.")

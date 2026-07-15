@@ -283,6 +283,7 @@ def test_run_heads_up_alert_on_curator_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
     monkeypatch.setattr(main, "resolve_curator",
                         lambda *a, **k: ("gpt-oss:120b", ["deepseek-v3.1:671b"]))
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)  # base healthy: isolate curator alert
     monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
     cfg = Config("tok", "-100", "", str(tmp_path),
                  [Theme(key="t", name="T", emoji="", query="q", count=1)],
@@ -303,12 +304,82 @@ def test_run_no_alert_when_primary_curator_works(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
     monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("deepseek-v3.1:671b", []))
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)  # base healthy too -> fully silent
     monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
     cfg = Config("tok", "-100", "", str(tmp_path),
                  [Theme(key="t", name="T", emoji="", query="q", count=1)],
                  "http://x", alert_chat_id="d")
     main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert alerts == []      # primary worked -> silent
+
+
+def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
+    # The curator resolved to a non-base model, so resolve_curator never pinged the base
+    # model (OLLAMA_MODEL, drives titles + translation). It's retired -> titles/translation
+    # silently degrade to deterministic fallbacks. A heads-up DM must fire; the run is NOT
+    # degraded (curation is fine). This is the 2026-07-15 gemma3:12b retirement.
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gpt-oss:120b", []))
+    # base model gemma3:12b is down; every other model is reachable
+    monkeypatch.setattr(main, "llm_reachable", lambda host, model, *a, **k: model != "gemma3:12b")
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "http://x", ollama_model="gemma3:12b",
+                 ollama_curator_models=("gpt-oss:120b",), alert_chat_id="d")
+    failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and len(alerts) == 1
+    assert "gemma3:12b" in alerts[0] and "OLLAMA_MODEL" in alerts[0]
+    assert "Ollama unreachable" not in alerts[0]      # heads-up, not the degraded alert
+
+
+def test_run_no_base_alert_when_base_model_reachable(tmp_path, monkeypatch):
+    # curator on a non-base rung AND the base model is reachable -> no base heads-up.
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gpt-oss:120b", []))
+    monkeypatch.setattr(main, "llm_reachable", lambda host, model, *a, **k: True)
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "http://x", ollama_model="gemma3:12b",
+                 ollama_curator_models=("gpt-oss:120b",), alert_chat_id="d")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert alerts == []      # base reachable -> silent
+
+
+def test_run_no_base_alert_on_fully_degraded_run(tmp_path, monkeypatch):
+    # whole chain down (curator is None) -> the degraded alert already says "no titles/
+    # translation"; the base heads-up must NOT also fire (guarded by `not degraded`).
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: (None, ["gemma3:12b"]))
+    # llm_reachable should never even be consulted for the base once degraded; make it loud if it is
+    monkeypatch.setattr(main, "llm_reachable",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("base pinged while degraded")))
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "http://x", ollama_model="gemma3:12b", alert_chat_id="d")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert len(alerts) == 1 and "Ollama unreachable" in alerts[0]
 
 
 def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypatch):
