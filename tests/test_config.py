@@ -46,7 +46,7 @@ def test_load_config_defaults_state_dir_and_blank_optionals():
     cfg = load_config(env=_env(), themes_path=str(SAMPLE))
     assert cfg.state_dir == "/data"
     assert cfg.github_token == ""
-    assert cfg.ollama_host == "https://ollama.com" and cfg.ollama_model == "gemma3:12b"
+    assert cfg.ollama_host == "https://ollama.com" and cfg.ollama_model == "gemma4:31b"
     assert cfg.ollama_api_key == ""
 
 def test_load_config_missing_required_var_exits():
