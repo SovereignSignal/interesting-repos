@@ -49,8 +49,9 @@ Trending sweeps the remainder):
   and appends `OLLAMA_MODEL` as the final rung; the chosen model drives `rank()` + `make_summaries`
   while **titles and translation always stay on `OLLAMA_MODEL`**. A retired/401 primary self-heals
   to the next candidate (heads-up DM, run not degraded); only an all-down chain is stars-only +
-  degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro,gpt-oss:120b` with `gemma4:31b` base
-  (both predecessors `deepseek-v3.1:671b` and `gemma3:12b` were retired 2026-07-15).
+  degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro,gpt-oss:120b` with `gemma4:31b-cloud` base
+  (predecessors `deepseek-v3.1:671b` / `gemma3:12b` retired 2026-07-15; bare `gemma4:31b`
+  stopped resolving on Ollama Cloud 2026-08-10 — use the `-cloud` suffix).
   (Ollama Cloud retires models with little notice — `qwen3-next:80b` was pulled 2026-06-16, which
   is why the fallback chain exists; on a degraded/heads-up alert, probe the model for HTTP 410.)
 - **Never log at INFO around sends.** httpx logs request URLs at INFO and the Telegram token sits in
@@ -62,7 +63,7 @@ Trending sweeps the remainder):
 
 Env vars (`bot/config.load_config`): **required** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 Optional: `GITHUB_TOKEN`, `STATE_DIR` (=`/data`), `OLLAMA_HOST` (=`https://ollama.com`),
-`OLLAMA_MODEL` (=`gemma4:31b`), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
+`OLLAMA_MODEL` (=`gemma4:31b-cloud`), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
 candidates, first reachable wins, base model is the final rung; blank ⇒ curate with `OLLAMA_MODEL`),
 `SEND_DELAY_SECONDS` (=20, spaces messages within a run), `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
 `ALERT_CHAT_ID`. Leave `OLLAMA_HOST` blank to disable all LLM features.

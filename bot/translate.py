@@ -16,7 +16,7 @@ _NON_LATIN = re.compile(
 )
 
 _DEFAULT_HOST = "https://ollama.com"
-_DEFAULT_MODEL = "gemma4:31b"
+_DEFAULT_MODEL = "gemma4:31b-cloud"
 
 
 def needs_translation(text: str) -> bool:

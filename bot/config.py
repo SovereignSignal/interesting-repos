@@ -88,7 +88,7 @@ class Config:
     state_dir: str
     themes: list[Theme]
     ollama_host: str = "https://ollama.com"
-    ollama_model: str = "gemma4:31b"
+    ollama_model: str = "gemma4:31b-cloud"
     ollama_api_key: str = ""
     ollama_curator_models: tuple = ()   # ordered curator candidates; first reachable wins
     send_delay_seconds: float = 0
@@ -113,7 +113,7 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         state_dir=env.get("STATE_DIR", "/data"),
         themes=load_themes(themes_path),
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),
-        ollama_model=env.get("OLLAMA_MODEL", "gemma4:31b"),
+        ollama_model=env.get("OLLAMA_MODEL", "gemma4:31b-cloud"),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
         ollama_curator_models=tuple(
             m.strip() for m in env.get("OLLAMA_CURATOR_MODEL", "").split(",") if m.strip()),
