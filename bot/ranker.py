@@ -88,7 +88,20 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
     lines = []
     for i, r in enumerate(repos):
         topics = ", ".join(r.topics)
-        lines.append(f"{i}. {r.full_name} (★{r.stars}, {_describe_age(r, today)}) "
+        # Facts the curator can weigh: stars/age/velocity plus engagement (forks) and
+        # provenance (license, org- vs user-owned) — signal only, never a hard rule
+        # (deterministic code still enforces the bar; see rank()'s docstring).
+        facts = [f"★{r.stars}", _describe_age(r, today)]
+        forks = getattr(r, "forks", 0)
+        if forks:
+            facts.append(f"{forks} forks")
+        lic = getattr(r, "license", "")
+        if lic:
+            facts.append(lic)
+        owner_type = getattr(r, "owner_type", "")
+        if owner_type:
+            facts.append("org-owned" if owner_type == "Organization" else "user-owned")
+        lines.append(f"{i}. {r.full_name} ({', '.join(facts)}) "
                      f"— {r.description} [topics: {topics}]")
     listing = "\n".join(lines)
 
@@ -110,7 +123,8 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
         "stale repos.\n"
         "For each candidate also give one short reason (max 20 words) for the score — what's "
         "novel, who it's for, or its momentum.\n\n"
-        f"Candidates (index. owner/name (stars, age, velocity) — description [topics]):\n{listing}\n\n"
+        f"Candidates (index. owner/name (stars, age, velocity, forks, license, owner type) "
+        f"— description [topics]):\n{listing}\n\n"
         'Return ONLY a JSON array with one object per candidate, like: '
         '[{"i": 0, "score": 8, "why": "first open-source X with Y"}]'
     )

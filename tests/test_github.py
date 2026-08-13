@@ -90,6 +90,20 @@ def test_parse_repo_defaults_timestamps_to_empty():
     assert r.created_at == "" and r.pushed_at == ""
 
 
+def test_parse_repo_reads_engagement_and_ownership_fields():
+    r = parse_repo({**ITEM, "forks_count": 88, "license": {"spdx_id": "MIT"},
+                    "owner": {"type": "Organization"}})
+    assert r.forks == 88 and r.license == "MIT" and r.owner_type == "Organization"
+
+
+def test_parse_repo_normalizes_missing_or_unrecognized_license():
+    assert parse_repo({**ITEM}).license == ""                                  # no key
+    assert parse_repo({**ITEM, "license": None}).license == ""                 # explicit null
+    assert parse_repo({**ITEM, "license": {"spdx_id": "NOASSERTION"}}).license == ""  # sentinel
+    r = parse_repo({**ITEM})
+    assert r.forks == 0 and r.owner_type == ""                                 # engagement/owner default
+
+
 from bot.github import readme_excerpt
 
 

@@ -125,6 +125,22 @@ def test_rank_llm_prompt_asks_for_scores_and_includes_age():
     assert "★/day" in captured["prompt"]
 
 
+def test_rank_llm_prompt_includes_engagement_and_ownership():
+    from bot.github import Repo as GHRepo
+    captured = {}
+    def handler(request):
+        import json as _json
+        captured["p"] = _json.loads(request.content)["messages"][0]["content"]
+        return httpx.Response(200, json={"message": {"content": '[{"i":0,"score":9,"why":"w"}]'}})
+    repo = GHRepo(1, "org/tool", "u", "a real tool", 500, "Rust", [], False, False,
+                  created_at="2026-06-01T00:00:00Z", forks=120, license="Apache-2.0",
+                  owner_type="Organization")
+    _rank_llm([repo], _theme("llm", 1), "http://x", "m", "k",
+              today=date(2026, 6, 4), client=_client(handler))
+    p = captured["p"]
+    assert "120 forks" in p and "Apache-2.0" in p and "org-owned" in p
+
+
 def test_rank_by_stars_deprioritizes_velocity_outliers():
     today = date(2026, 6, 4)
     farm = R(1, 200000, created_at="2026-06-02T00:00:00Z")   # ~100000 stars/day

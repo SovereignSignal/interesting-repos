@@ -18,6 +18,16 @@ class Repo:
     is_archived: bool
     created_at: str = ""
     pushed_at: str = ""
+    forks: int = 0
+    license: str = ""       # SPDX id (e.g. "MIT"); "" when none/unrecognized
+    owner_type: str = ""    # "User" or "Organization" — solo vs org-backed signal
+
+
+def _spdx(item: dict) -> str:
+    """The repo's SPDX license id, or "" when unlicensed/unrecognized. GitHub uses
+    the sentinel "NOASSERTION" for a license it can't map — treat that as none."""
+    spdx = ((item.get("license") or {}).get("spdx_id")) or ""
+    return "" if spdx == "NOASSERTION" else spdx
 
 
 def parse_repo(item: dict) -> Repo:
@@ -33,6 +43,9 @@ def parse_repo(item: dict) -> Repo:
         is_archived=bool(item.get("archived", False)),
         created_at=item.get("created_at") or "",
         pushed_at=item.get("pushed_at") or "",
+        forks=item.get("forks_count", 0),
+        license=_spdx(item),
+        owner_type=(item.get("owner") or {}).get("type") or "",
     )
 
 
