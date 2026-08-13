@@ -5,7 +5,7 @@ from datetime import datetime, timezone, date
 
 from bot.config import expand_since
 from bot.github import search_repos, readme_first_line, readme_excerpt
-from bot.filters import clean, cap_agent_skills
+from bot.filters import clean, cap_agent_skills, star_velocity, age_days
 from bot.ranker import rank
 from bot.formatter import build_messages
 from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
@@ -140,8 +140,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             if theme.delta_days:    # annotate the meta line with '+N★ this week'
                 base = baselines.get(theme.key, {})
                 deltas = [r.stars - base.get(r.id, r.stars) for r in repos_]
+            # ★/day momentum for every theme — None when creation date is unknown (so the
+            # velocity would be meaningless), which the formatter renders as no badge.
+            momenta = [star_velocity(r, today) if age_days(r.created_at, today) is not None
+                       else None for r in repos_]
             messages = build_messages(theme, repos_, describe, translate, titles,
-                                      summaries, deltas)
+                                      summaries, deltas, momenta)
             if dry_run:
                 for m in messages:
                     print(m)

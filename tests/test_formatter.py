@@ -12,6 +12,7 @@ class R:
     stars: int
     language: str
     topics: list = field(default_factory=list)
+    license: str = ""
 
 
 def _theme():
@@ -120,3 +121,44 @@ def test_build_messages_none_delta_entry_is_unannotated():
                        deltas=[None])[0]
     assert "this week" not in m
     assert "⭐ 10 · Go · a/b" in m
+
+
+from bot.formatter import _format_momentum
+
+
+def test_format_momentum_rounds_and_annotates():
+    assert _format_momentum(38.4) == "38★/day"
+    assert _format_momentum(1234.5) == "1,234★/day"
+
+
+def test_format_momentum_none_when_unknown_or_below_one():
+    assert _format_momentum(None) is None
+    assert _format_momentum(0.4) is None
+
+
+def test_build_messages_shows_momentum_badge_when_provided():
+    repos = [R(1, "a/b", "https://x/1", "d", 1500, "Rust")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       momenta=[38.4])[0]
+    assert "⭐ 1,500 · 38★/day · Rust · a/b" in m
+
+
+def test_build_messages_omits_momentum_when_none_or_below_one():
+    repos = [R(1, "a/b", "u", "d", 10, "Go")]
+    low = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"], momenta=[0.4])[0]
+    none = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"], momenta=[None])[0]
+    assert "★/day" not in low and "★/day" not in none
+    assert "⭐ 10 · Go · a/b" in low
+
+
+def test_build_messages_shows_license_when_present():
+    repos = [R(1, "a/b", "https://x/1", "d", 1500, "Rust", license="MIT")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"])[0]
+    assert "⭐ 1,500 · MIT · Rust · a/b" in m
+
+
+def test_build_messages_orders_momentum_then_growth_then_license():
+    repos = [R(1, "a/b", "https://x/1", "d", 1500, "Rust", license="MIT")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       deltas=[1234], momenta=[38.4])[0]
+    assert "⭐ 1,500 · 38★/day · +1.2k★ this week · MIT · Rust · a/b" in m
