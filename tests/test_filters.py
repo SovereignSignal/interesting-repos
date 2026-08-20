@@ -1,5 +1,7 @@
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
+import json
 
 from bot.filters import age_days, star_velocity
 
@@ -98,6 +100,22 @@ def test_is_ai_repo_passes_non_ai():
     assert is_ai_repo(_repo(full_name="NawfalMotii79/PLFM_RADAR",
                             description="Open-source 10.5 GHz PLFM phased array RADAR system")) is False
     assert is_ai_repo(_repo(full_name="t8y2/dbx", description="cross-platform database client")) is False
+
+
+def test_is_ai_repo_owner_ai_token_and_description_false_positives():
+    """MiniMax-H3-shaped leak (empty metadata, AI only in the org name) plus the
+    guards: 'ai' inside description words, and 'openai' as a single token."""
+    cases = json.loads((Path(__file__).parent / "data" / "ai_leaks.json").read_text())
+    for case in cases:
+        repo = _repo(full_name=case["full_name"], description=case["description"],
+                     topics=case["topics"])
+        assert is_ai_repo(repo) is case["ai"], case["why"]
+
+
+def test_cap_agent_skills_zero_drops_minimax_h3_shaped_leak():
+    leak = _repo(full_name="MiniMax-AI/MiniMax-H3", description="", topics=[])
+    keep = _repo(full_name="vorssaint/vorssaint-utils", description="macOS menu bar toolkit")
+    assert cap_agent_skills([leak, keep], 0) == [keep]
 
 
 def test_cap_agent_skills_none_is_passthrough():

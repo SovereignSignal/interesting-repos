@@ -80,6 +80,9 @@ _AI_MARKERS = ("ai agent", "ai-agent", "agentic", "agent-native", "agent-first",
                "anthropic", "ai coding", "ai-powered", "ai-native", "coding agent",
                "ai assistant", "ai memory", "ai workspace", "co-scientist", "llm",
                "large language model")
+# Owner login only (MiniMax-AI, langchain-ai, deepseek-ai). Split on punctuation so
+# "openai" / "available" / "email" do not match. Never run this against descriptions.
+_OWNER_SEP_RE = re.compile(r"[-_.]+")
 
 
 def is_agent_skill_pack(repo) -> bool:
@@ -93,13 +96,24 @@ def is_agent_skill_pack(repo) -> bool:
     return any(p in d for p in _PACK_DESC) or bool(_PACK_NUM_RE.search(d))
 
 
+def _owner_has_ai_token(repo) -> bool:
+    """True when the owner login has a path segment exactly equal to 'ai'
+    (MiniMax-AI, langchain-ai, deepseek-ai, owner 'ai'). Deliberately does not
+    substring-match 'openai' or description words like 'available'/'email'."""
+    owner = repo.full_name.split("/")[0].lower()
+    return any(tok == "ai" for tok in _OWNER_SEP_RE.split(owner) if tok)
+
+
 def is_ai_repo(repo) -> bool:
-    """Broad: any AI / agent / LLM repo (a skill pack, an AI topic, or an AI marker in
-    the name/description). Used only for the cap=0 (non-AI highlight) policy, where
-    aggressive exclusion is intended and false positives are harmless."""
+    """Broad: any AI / agent / LLM repo (a skill pack, an AI topic, an AI marker in
+    the name/description, or an 'ai' token in the owner login). Used only for the
+    cap=0 (non-AI highlight) policy, where aggressive exclusion is intended and
+    false positives are harmless."""
     if is_agent_skill_pack(repo):
         return True
     if {t.lower() for t in repo.topics} & _AI_TOPICS:
+        return True
+    if _owner_has_ai_token(repo):
         return True
     blob = (repo.full_name + " " + (repo.description or "")).lower()
     return any(m in blob for m in _AI_MARKERS)

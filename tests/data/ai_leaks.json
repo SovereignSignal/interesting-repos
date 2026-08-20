@@ -1,0 +1,51 @@
+[
+  {
+    "full_name": "MiniMax-AI/MiniMax-H3",
+    "description": "",
+    "topics": [],
+    "ai": true,
+    "why": "empty desc+topics; AI only in the org path segment — the 2026-08 Trending leak"
+  },
+  {
+    "full_name": "langchain-ai/openwiki",
+    "description": "a CLI that writes agent documentation",
+    "topics": [],
+    "ai": true,
+    "why": "owner path segment 'ai' even when the description is otherwise ordinary"
+  },
+  {
+    "full_name": "deepseek-ai/deepseek-harness",
+    "description": "Everything is a Plugin.",
+    "topics": [],
+    "ai": true,
+    "why": "owner path segment 'ai'"
+  },
+  {
+    "full_name": "ai/tokenizer",
+    "description": "",
+    "topics": [],
+    "ai": true,
+    "why": "owner login is the token 'ai'"
+  },
+  {
+    "full_name": "acme/widget",
+    "description": "details available via email",
+    "topics": [],
+    "ai": false,
+    "why": "bare 'ai' inside description words must not fire"
+  },
+  {
+    "full_name": "vorssaint/vorssaint-utils",
+    "description": "macOS menu bar toolkit",
+    "topics": [],
+    "ai": false,
+    "why": "non-AI org, real description, empty topics"
+  },
+  {
+    "full_name": "openai/sdk",
+    "description": "details available via email",
+    "topics": [],
+    "ai": false,
+    "why": "'openai' is not an 'ai' path segment; do not substring-match"
+  }
+]
