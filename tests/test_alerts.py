@@ -25,6 +25,21 @@ def _model_aware_client(reachable, seen=None):
     return _client(handler)
 
 
+_NO_SLEEP = lambda _: None    # skip real backoff delays in tests
+
+
+def _flaky_client(fail_first: int):
+    """Returns (client, calls): the first `fail_first` pings 500, then 200 pong.
+    Simulates a transient blip that recovers on retry."""
+    calls = {"n": 0}
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= fail_first:
+            return httpx.Response(500)
+        return httpx.Response(200, json={"message": {"content": "pong"}})
+    return _client(handler), calls
+
+
 def test_llm_reachable_true_without_host():
     assert llm_reachable("", "m") is True          # LLM not configured -> not a failure
 
@@ -35,7 +50,26 @@ def test_llm_reachable_true_when_chat_responds():
 
 def test_llm_reachable_false_on_auth_error():
     c = _client(lambda r: httpx.Response(401, text="unauthorized"))
-    assert llm_reachable("http://x", "m", client=c) is False   # 401 -> chat "" -> unreachable
+    # 401 every attempt -> sustained failure -> unreachable (no_sleep skips backoff)
+    assert llm_reachable("http://x", "m", client=c, sleep=_NO_SLEEP) is False
+
+
+def test_llm_reachable_rides_out_transient_blip():
+    c, calls = _flaky_client(fail_first=1)   # first ping 500, second 200
+    assert llm_reachable("http://x", "m", client=c, sleep=_NO_SLEEP) is True
+    assert calls["n"] == 2                    # retried past the blip, didn't page
+
+
+def test_llm_reachable_false_after_exhausting_attempts():
+    c, calls = _flaky_client(fail_first=99)   # never recovers
+    assert llm_reachable("http://x", "m", client=c, attempts=3, sleep=_NO_SLEEP) is False
+    assert calls["n"] == 3                     # tried exactly `attempts` times
+
+
+def test_llm_reachable_single_attempt_does_not_retry():
+    c, calls = _flaky_client(fail_first=99)
+    assert llm_reachable("http://x", "m", client=c, attempts=1, sleep=_NO_SLEEP) is False
+    assert calls["n"] == 1                     # attempts=1 -> one-shot, no retry
 
 
 def test_send_alert_noop_without_chat_id():
@@ -68,23 +102,43 @@ def test_resolve_curator_first_candidate_reachable():
 
 def test_resolve_curator_skips_dead_primary_to_next():
     c = _model_aware_client({"b", "base"})            # a is down
-    assert resolve_curator("http://x", ("a", "b"), "base", client=c) == ("b", ["a"])
+    assert resolve_curator("http://x", ("a", "b"), "base", client=c,
+                           sleep=_NO_SLEEP) == ("b", ["a"])
 
 
 def test_resolve_curator_falls_through_to_base():
     c = _model_aware_client({"base"})                 # a, b down
-    assert resolve_curator("http://x", ("a", "b"), "base", client=c) == ("base", ["a", "b"])
+    assert resolve_curator("http://x", ("a", "b"), "base", client=c,
+                           sleep=_NO_SLEEP) == ("base", ["a", "b"])
 
 
 def test_resolve_curator_none_when_all_dead():
     c = _model_aware_client(set())                    # everything down
-    assert resolve_curator("http://x", ("a", "b"), "base", client=c) == (None, ["a", "b", "base"])
+    assert resolve_curator("http://x", ("a", "b"), "base", client=c,
+                           sleep=_NO_SLEEP) == (None, ["a", "b", "base"])
+
+
+def test_resolve_curator_tolerates_transient_blip_on_primary():
+    # 'a' fails its first probe then recovers; the retry must keep it as the curator
+    # instead of skipping to 'b' and firing a spurious curator-fallback heads-up.
+    state = {"a": 0}
+    def handler(request):
+        model = _json.loads(request.content)["model"]
+        if model == "a":
+            state["a"] += 1
+            if state["a"] == 1:
+                return httpx.Response(500)            # transient blip on first probe
+        return httpx.Response(200, json={"message": {"content": "pong"}})
+    c = _client(handler)
+    assert resolve_curator("http://x", ("a", "b"), "base", client=c,
+                           sleep=_NO_SLEEP) == ("a", [])
 
 
 def test_resolve_curator_dedupes_base_already_in_candidates():
     seen = []
     c = _model_aware_client(set(), seen)              # all down, capture probe order
-    model, skipped = resolve_curator("http://x", ("a", "base"), "base", client=c)
+    # attempts=1 isolates the dedup-order check from retry behavior
+    model, skipped = resolve_curator("http://x", ("a", "base"), "base", client=c, attempts=1)
     assert seen == ["a", "base"]                      # base rung not probed twice
     assert (model, skipped) == (None, ["a", "base"])
 

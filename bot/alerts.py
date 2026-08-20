@@ -1,18 +1,30 @@
+import time
+
 from bot.ollama import chat
 from bot.telegram import send_message
 
 
-def llm_reachable(host: str, model: str, api_key: str = "", client=None) -> bool:
+def llm_reachable(host: str, model: str, api_key: str = "", client=None,
+                  attempts: int = 3, sleep=time.sleep) -> bool:
     """Pre-flight health check: True when no host is configured (LLM unused → not a
-    failure), else True iff a one-shot chat ping round-trips. A 401/outage makes chat()
-    return "" → False, so a silently-degrading run can be alerted instead of hiding."""
+    failure), else True iff a chat ping round-trips within `attempts` tries. A 401/outage
+    makes chat() return "" → retry with backoff, and only a *sustained* failure returns
+    False. The retry matters because chat() collapses every error (5xx, timeout, 429) to
+    "", so a single transient blip on a one-shot ping would otherwise page a healthy model
+    (the 2026-08-19 gemma4:31b heads-up was exactly this — the model was fine seconds
+    later). Backoff mirrors telegram.send_message; `sleep` is injectable for tests."""
     if not host:
         return True
-    return bool(chat("ping", host=host, model=model, api_key=api_key, client=client))
+    for attempt in range(attempts):
+        if chat("ping", host=host, model=model, api_key=api_key, client=client):
+            return True
+        if attempt < attempts - 1:
+            sleep(2 ** attempt)
+    return False
 
 
 def resolve_curator(host: str, candidates, base_model: str, api_key: str = "",
-                    client=None) -> tuple:
+                    client=None, attempts: int = 3, sleep=time.sleep) -> tuple:
     """Pick the first reachable curator model, walking `candidates` in order and falling
     back to `base_model` as the final rung. Returns (model_or_None, skipped), where
     `skipped` is the models tried-and-failed before the chosen one ([] if the first
@@ -28,7 +40,7 @@ def resolve_curator(host: str, candidates, base_model: str, api_key: str = "",
             order.append(m)
     skipped: list = []
     for m in order:
-        if llm_reachable(host, m, api_key, client=client):
+        if llm_reachable(host, m, api_key, client=client, attempts=attempts, sleep=sleep):
             return (m, skipped)
         skipped.append(m)
     return (None, skipped)
