@@ -234,6 +234,8 @@ def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["Title"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: ["LLM blurb here."])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    # curator resolves to the base model -> no real pre-flight pings (avoids retry backoff)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gemma4:31b", []))
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 4))
     assert any("LLM blurb here." in m for m in sent)
@@ -266,6 +268,7 @@ def test_run_passes_curator_whys_to_summaries(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
     monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("m", []))
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)  # base fine -> no retry backoff
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 8, 13))
     assert seen["whys"] == ["novel rust db"]
@@ -404,6 +407,7 @@ def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypat
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
     # resolved curator routes to rank + summaries; titles/translation stay on the base model
     monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("qwen3-next:80b", []))
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)  # base fine -> no retry backoff
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     cfg = Config("tok", "-100", "", str(tmp_path), [theme], "http://x",
                  ollama_model="gemma3:12b", ollama_curator_models=("qwen3-next:80b",))

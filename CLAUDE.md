@@ -38,7 +38,10 @@ Trending sweeps the remainder):
 - **Graceful degradation is silent by design, so it must be alarmed.** Every LLM call falls back to ""
   (stars-sort / `_prettify` titles / raw descriptions / untranslated text). A bad `OLLAMA_API_KEY`
   once degraded prod with no crash and no alert (2026-06-06). `bot/alerts.llm_reachable` now
-  pre-flight pings the LLM and DMs an alert. It pings the curator chain (via `resolve_curator`)
+  pre-flight pings the LLM and DMs an alert. The ping retries a few times with backoff (same
+  shape as `telegram.send_message`) so a single transient blip — a one-off 5xx/timeout/429 that
+  `chat()` collapses to `""` — doesn't page a healthy model (the 2026-08-19 `gemma4:31b` heads-up
+  was exactly this: reachable seconds later); only a *sustained* failure alerts. It pings the curator chain (via `resolve_curator`)
   **and**, independently in `main.run`, the base `OLLAMA_MODEL` — because titles + translation
   call the base model *directly*, outside the chain, so a curator that resolves on an earlier
   rung leaves the base unverified. A retired base (the 2026-07-15 `gemma3:12b` retirement slipped
