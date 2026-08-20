@@ -68,7 +68,9 @@ profile = "Substantive crypto / web3 / DeFi projects — protocols, infrastructu
 key   = "finance"
 name  = "Finance & Quant"
 emoji = "💰"
-query = "finance created:>{since:180d} stars:>100"
+query = ["finance created:>{since:180d} stars:>50",
+         "topic:quant created:>{since:180d} stars:>20",
+         "topic:trading created:>{since:180d} stars:>20"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -92,7 +94,9 @@ profile = "Substantive security tooling — offensive, defensive, cloud, or AI/a
 key   = "systems"
 name  = "Systems & Languages"
 emoji = "⚙️"
-query = "topic:systems-programming created:>{since:180d} stars:>10"
+query = ["topic:systems-programming created:>{since:180d}",
+         "topic:compiler created:>{since:180d}",
+         "language:Zig created:>{since:180d} stars:>10"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -104,7 +108,9 @@ profile = "Substantive systems & low-level work — languages, compilers, runtim
 key   = "data"
 name  = "Data & Databases"
 emoji = "🗄️"
-query = ["topic:database created:>{since:120d} stars:>50", "topic:data-engineering created:>{since:120d} stars:>50"]
+query = ["topic:database created:>{since:120d} stars:>10",
+         "topic:data-engineering created:>{since:120d} stars:>10",
+         "topic:postgresql created:>{since:120d} stars:>10"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -116,7 +122,8 @@ profile = "Substantive databases, query and storage engines, data pipelines, and
 key   = "web"
 name  = "Web & Frontend"
 emoji = "🌐"
-query = ["topic:frontend created:>{since:120d} stars:>50", "topic:webdev created:>{since:120d} stars:>50"]
+query = ["topic:frontend created:>{since:120d} stars:>10",
+         "topic:react created:>{since:120d} stars:>20"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -128,7 +135,8 @@ profile = "Substantive web and frontend projects — frameworks, build tools, UI
 key   = "science"
 name  = "Science & Simulation"
 emoji = "🔬"
-query = "topic:scientific-computing created:>{since:180d} stars:>20"
+query = ["topic:scientific-computing created:>{since:180d} stars:>5",
+         "topic:simulation created:>{since:180d} stars:>5"]
 sort  = "stars"
 count = 7
 rank  = "llm"

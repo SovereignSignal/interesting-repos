@@ -252,6 +252,25 @@ def test_run_quiet_slot_when_nothing_clears_quality_bar(tmp_path, monkeypatch, c
     assert "quality bar" in caplog.text
 
 
+def test_run_logs_phase1_pool_funnel(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    sent = []
+    _patch(monkeypatch, [_repo(1, 10), _repo(2, 20)], sent)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=2)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 5, 26))
+    assert "theme t: searched=2 after_clean=2 after_unsent=2 after_cap=2 picked=2" in caplog.text
+
+
+def test_run_pool_funnel_counts_unsent_drop(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    sent = []
+    _patch(monkeypatch, [_repo(1, 10), _repo(2, 20)], sent)
+    (tmp_path / "state.json").write_text('{"t": [1]}')
+    theme = Theme(key="t", name="T", emoji="", query="q", count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 5, 26))
+    assert "theme t: searched=2 after_clean=2 after_unsent=1 after_cap=1 picked=1" in caplog.text
+
+
 def test_run_passes_curator_whys_to_summaries(tmp_path, monkeypatch):
     from bot.ranker import Pick
     seen = {}

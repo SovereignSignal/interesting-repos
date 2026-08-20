@@ -210,3 +210,43 @@ def test_load_themes_reads_delta_days(tmp_path):
     p = tmp_path / "t.toml"
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ndelta_days=7\n')
     assert load_themes(str(p))[0].delta_days == 7
+
+
+def _queries(theme):
+    q = theme.query
+    return q if isinstance(q, tuple) else (q,)
+
+
+def test_prod_themes_widen_starved_queries():
+    """Track A1: starved themes keep a usable net; the dead webdev query is gone.
+    Trending's stars floor stays until cap=0 is hardened (Track B)."""
+    themes = {t.key: t for t in load_themes(str(Path(__file__).resolve().parents[1] / "themes.toml"))}
+
+    web = _queries(themes["web"])
+    assert not any("webdev" in q for q in web)
+    assert "topic:frontend created:>{since:120d} stars:>10" in web
+    assert "topic:react created:>{since:120d} stars:>20" in web
+
+    data = _queries(themes["data"])
+    assert not any("stars:>50" in q for q in data)
+    assert "topic:database created:>{since:120d} stars:>10" in data
+    assert "topic:data-engineering created:>{since:120d} stars:>10" in data
+    assert "topic:postgresql created:>{since:120d} stars:>10" in data
+
+    science = _queries(themes["science"])
+    assert "topic:scientific-computing created:>{since:180d} stars:>5" in science
+    assert "topic:simulation created:>{since:180d} stars:>5" in science
+
+    systems = _queries(themes["systems"])
+    assert "topic:systems-programming created:>{since:180d}" in systems
+    assert not any(q.startswith("topic:systems-programming") and "stars:" in q for q in systems)
+    assert "topic:compiler created:>{since:180d}" in systems
+    assert "language:Zig created:>{since:180d} stars:>10" in systems
+
+    finance = _queries(themes["finance"])
+    assert "finance created:>{since:180d} stars:>50" in finance
+    assert not any("stars:>100" in q for q in finance)
+    assert "topic:quant created:>{since:180d} stars:>20" in finance
+    assert "topic:trading created:>{since:180d} stars:>20" in finance
+
+    assert themes["trending"].query == "created:>{since:90d} stars:>1000"

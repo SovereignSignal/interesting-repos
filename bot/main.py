@@ -87,13 +87,19 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 baseline = find_baseline(config.state_dir, today, theme.delta_days)
                 repos = order_by_delta(repos, baseline)   # drops repos with no prior snapshot
                 baselines[theme.key] = baseline
+            n_searched = len(repos)
             repos = clean(repos, today, theme.max_idle_days)
+            n_clean = len(repos)
             repos = unsent(state, theme.key, repos)
             repos = [r for r in repos if r.id not in claimed]
+            n_unsent = len(repos)
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = repos[:CANDIDATE_LIMIT]
+            n_cap = len(repos)
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
                           ollama_model=curator_model or "", ollama_api_key=config.ollama_api_key)
+            log.info("theme %s: searched=%d after_clean=%d after_unsent=%d after_cap=%d picked=%d",
+                     theme.key, n_searched, n_clean, n_unsent, n_cap, len(picked))
             if repos and not picked:
                 log.info("theme %s: %d candidates, none above the quality bar",
                          theme.key, len(repos))
