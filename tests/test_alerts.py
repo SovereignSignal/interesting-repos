@@ -51,6 +51,22 @@ def test_llm_reachable_true_when_chat_responds():
     assert llm_reachable("http://x", "m", client=_content_client("pong")) is True
 
 
+def test_llm_reachable_true_on_blank_content_200():
+    # Gemma 4 thinking: HTTP 200, message.content empty → still reachable
+    c = _client(lambda r: httpx.Response(200, json={"message": {"role": "assistant", "content": ""}}))
+    assert llm_reachable("http://x", "gemma4:31b", client=c) is True
+
+
+def test_llm_reachable_ping_disables_thinking():
+    seen = {}
+    def handler(request):
+        seen["body"] = _json.loads(request.content)
+        return httpx.Response(200, json={"message": {"content": ""}})
+    assert llm_reachable("http://x", "m", client=_client(handler)) is True
+    assert seen["body"]["think"] is False
+    assert seen["body"]["model"] == "m"
+
+
 def test_llm_reachable_false_on_auth_error():
     c = _client(lambda r: httpx.Response(401, text="unauthorized"))
     # 401 every attempt -> sustained failure -> unreachable (no_sleep skips backoff)
@@ -159,13 +175,15 @@ def test_resolve_curator_single_candidate_equals_base():
     assert resolve_curator("http://x", ("gemma3:12b",), "gemma3:12b", client=c) == ("gemma3:12b", [])
 
 
-def test_model_aliases_cloud_colon_tag_tries_cloud_first():
+def test_model_aliases_cloud_colon_tag_tries_catalog_then_cloud_suffix():
+    # Direct API catalog is gemma4:31b; -cloud is the local-offload sibling
     assert model_aliases("gemma4:31b", "https://ollama.com") == (
+        "gemma4:31b", "gemma4:31b-cloud")
+
+
+def test_model_aliases_cloud_suffix_falls_back_to_catalog_name():
+    assert model_aliases("gemma4:31b-cloud", "https://ollama.com") == (
         "gemma4:31b-cloud", "gemma4:31b")
-
-
-def test_model_aliases_already_cloud_untouched():
-    assert model_aliases("gemma4:31b-cloud", "https://ollama.com") == ("gemma4:31b-cloud",)
 
 
 def test_model_aliases_cloud_native_name_untouched():
@@ -178,16 +196,25 @@ def test_model_aliases_local_host_untouched():
     assert model_aliases("gemma4:31b", "http://127.0.0.1:11434") == ("gemma4:31b",)
 
 
-def test_resolve_curator_tries_cloud_alias_before_bare_base():
-    # last-rung local tag on ollama.com: probe -cloud first, never the dead bare name
+def test_resolve_curator_tries_catalog_name_before_cloud_suffix():
     seen = []
-    c = _model_aware_client({"gemma4:31b-cloud"}, seen)
+    c = _model_aware_client({"gemma4:31b"}, seen)
     model, skipped = resolve_curator(
         "https://ollama.com", ("deepseek-v4-pro",), "gemma4:31b",
         client=c, attempts=1, sleep=_NO_SLEEP)
-    assert model == "gemma4:31b-cloud"
-    assert seen == ["deepseek-v4-pro", "gemma4:31b-cloud"]
+    assert model == "gemma4:31b"
+    assert seen == ["deepseek-v4-pro", "gemma4:31b"]   # working catalog id, no -cloud
     assert skipped == ["deepseek-v4-pro"]
+
+
+def test_resolve_curator_falls_back_to_cloud_suffix_if_catalog_name_dead():
+    seen = []
+    c = _model_aware_client({"gemma4:31b-cloud"}, seen)
+    model, skipped = resolve_curator(
+        "https://ollama.com", (), "gemma4:31b",
+        client=c, attempts=1, sleep=_NO_SLEEP)
+    assert model == "gemma4:31b-cloud"
+    assert seen == ["gemma4:31b", "gemma4:31b-cloud"]
 
 
 def test_resolve_curator_does_not_alias_on_local_host():
@@ -200,7 +227,18 @@ def test_resolve_curator_does_not_alias_on_local_host():
     assert seen == ["gemma4:31b"]
 
 
-def test_resolve_title_model_uses_cloud_alias():
+def test_resolve_title_model_uses_catalog_name_first():
+    seen = []
+    def ping(host, model, *a, **k):
+        seen.append(model)
+        return model == "gemma4:31b"
+    model, via = resolve_title_model(
+        "https://ollama.com", "gemma4:31b", "deepseek-v4-pro", ping=ping)
+    assert (model, via) == ("gemma4:31b", TITLE_VIA_BASE)
+    assert seen == ["gemma4:31b"]                 # never needs the -cloud sibling
+
+
+def test_resolve_title_model_falls_back_to_cloud_suffix():
     seen = []
     def ping(host, model, *a, **k):
         seen.append(model)
@@ -208,7 +246,7 @@ def test_resolve_title_model_uses_cloud_alias():
     model, via = resolve_title_model(
         "https://ollama.com", "gemma4:31b", "deepseek-v4-pro", ping=ping)
     assert (model, via) == ("gemma4:31b-cloud", TITLE_VIA_BASE)
-    assert seen == ["gemma4:31b-cloud"]          # never probes the dead local tag
+    assert seen == ["gemma4:31b", "gemma4:31b-cloud"]
 
 
 def test_resolve_title_model_falls_through_to_curator_without_reping():
@@ -219,18 +257,18 @@ def test_resolve_title_model_falls_through_to_curator_without_reping():
     model, via = resolve_title_model(
         "https://ollama.com", "gemma4:31b", "deepseek-v4-pro", ping=ping)
     assert (model, via) == ("deepseek-v4-pro", TITLE_VIA_CURATOR)
-    assert seen == ["gemma4:31b-cloud", "gemma4:31b"]
+    assert seen == ["gemma4:31b", "gemma4:31b-cloud"]
     assert "deepseek-v4-pro" not in seen         # curator already proven reachable
 
 
-def test_resolve_title_model_skips_ping_when_curator_is_alias():
+def test_resolve_title_model_skips_ping_when_curator_is_configured_base():
     seen = []
     def ping(host, model, *a, **k):
         seen.append(model)
         raise AssertionError("should not ping a curator-proven alias")
     model, via = resolve_title_model(
-        "https://ollama.com", "gemma4:31b", "gemma4:31b-cloud", ping=ping)
-    assert (model, via) == ("gemma4:31b-cloud", TITLE_VIA_BASE)
+        "https://ollama.com", "gemma4:31b", "gemma4:31b", ping=ping)
+    assert (model, via) == ("gemma4:31b", TITLE_VIA_BASE)
     assert seen == []
 
 
@@ -242,4 +280,4 @@ def test_resolve_title_model_none_without_host_or_curator():
         return False
     assert resolve_title_model(
         "https://ollama.com", "gemma4:31b", None, ping=ping) == ("", TITLE_VIA_NONE)
-    assert seen == ["gemma4:31b-cloud", "gemma4:31b"]
+    assert seen == ["gemma4:31b", "gemma4:31b-cloud"]

@@ -235,7 +235,7 @@ def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: ["LLM blurb here."])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
     # curator resolves to the base model -> no real pre-flight pings (avoids retry backoff)
-    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gemma4:31b-cloud", []))
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gemma4:31b", []))
     monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 4))

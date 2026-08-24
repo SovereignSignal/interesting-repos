@@ -39,32 +39,34 @@ Trending sweeps the remainder):
   (stars-sort / `_prettify` titles / raw descriptions / untranslated text). A bad `OLLAMA_API_KEY`
   once degraded prod with no crash and no alert (2026-06-06). `bot/alerts.llm_reachable` now
   pre-flight pings the LLM and DMs an alert. The ping retries a few times with backoff (same
-  shape as `telegram.send_message`) so a single transient blip — a one-off 5xx/timeout/429 that
-  `chat()` collapses to `""` — doesn't page a healthy model (the 2026-08-19 `gemma4:31b` heads-up
-  was exactly this: reachable seconds later); only a *sustained* failure alerts. It pings the curator chain (via `resolve_curator`)
-  **and**, independently, the base via `resolve_title_model` — because titles + translation
-  sit outside the curator chain, so a curator that resolves on an earlier rung used to leave
-  the base unverified. A retired base (the 2026-07-15 `gemma3:12b` retirement) now runs titles
-  on the live curator and fires a heads-up ("ran on {curator}", run not degraded) instead of
-  shipping deterministic titles. Both alerts can fire in one run (dead curator primary + dead base).
-- **Ollama Cloud local vs hosted tags:** ollama.com serves `name:size-cloud` (e.g.
-  `gemma4:31b-cloud`); bare `gemma4:31b` is the workstation pull and 410s on Cloud. Changing
-  the code default is not enough — prod sets `OLLAMA_MODEL` explicitly (closed PR #15).
-  `alerts.model_aliases` tries `{model}-cloud` first on ollama.com hosts (not on localhost,
-  not on names that already end in `-cloud`, not on colon-less cloud-native ids). A leftover
-  `OLLAMA_MODEL=gemma4:31b` therefore self-heals **silently** (INFO log, no DM). Only a true
-  retirement of both the tag and its `-cloud` sibling pages, and then titles still run on the
-  curator rather than `_prettify`.
+  shape as `telegram.send_message`) so a single transient blip — a one-off 5xx/timeout/429 —
+  doesn't page a healthy model (the 2026-08-19 `gemma4:31b` heads-up was exactly this: reachable
+  seconds later); only a *sustained* failure alerts. The ping is `chat_accepted` (HTTP 200),
+  **not** `chat()` content — Gemma 4's thinking path often returns 200 with empty
+  `message.content`, which used to page "base model unavailable" every cron (2026-08-24).
+  It pings the curator chain (via `resolve_curator`) **and**, independently, the base via
+  `resolve_title_model`. A retired base (the 2026-07-15 `gemma3:12b` retirement) now runs
+  titles on the live curator and fires a heads-up ("ran on {curator}", run not degraded)
+  instead of shipping deterministic titles. Both alerts can fire in one run (dead curator
+  primary + dead base). Titles/translation send `think=False` so Gemma 4 fills `content`.
+- **Ollama Cloud catalog vs `-cloud` suffix:** `GET https://ollama.com/api/tags` lists
+  `gemma4:31b` (not `gemma4:31b-cloud`). The `-cloud` suffix is the local-daemon offload
+  tag (`ollama run gemma4:31b-cloud`). Direct `/api/chat` on ollama.com uses catalog ids.
+  `alerts.model_aliases` tries the configured name first, then the sibling, so a leftover
+  of either form self-heals. Colon-less cloud-native ids (`deepseek-v4-pro`) are not
+  rewritten. Closed PR #15 defaulting to `-cloud` would have pinged a name that is not
+  in the catalog.
 - **Curator model split + fallback chain:** `alerts.resolve_curator` walks
   `OLLAMA_CURATOR_MODEL` (a comma-list of candidates) at pre-flight, picks the first reachable,
-  and appends `OLLAMA_MODEL` (plus its cloud aliases) as the final rung; the chosen model drives
+  and appends `OLLAMA_MODEL` (plus aliases) as the final rung; the chosen model drives
   `rank()` + `make_summaries` while **titles and translation use `resolve_title_model`**
-  (cloud alias of `OLLAMA_MODEL`, else the live curator). A retired/401 primary self-heals
-  to the next candidate (heads-up DM, run not degraded); only an all-down chain is stars-only +
-  degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro,gpt-oss:120b` with `gemma4:31b-cloud`
-  base (both predecessors `deepseek-v3.1:671b` and `gemma3:12b` were retired 2026-07-15).
-  (Ollama Cloud retires models with little notice — `qwen3-next:80b` was pulled 2026-06-16, which
-  is why the fallback chain exists; on a degraded/heads-up alert, probe the model for HTTP 410.)
+  (catalog id of `OLLAMA_MODEL`, else `-cloud` sibling, else the live curator). A retired/401
+  primary self-heals to the next candidate (heads-up DM, run not degraded); only an all-down
+  chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro,gpt-oss:120b`
+  with `gemma4:31b` base (both predecessors `deepseek-v3.1:671b` and `gemma3:12b` were
+  retired 2026-07-15). (Ollama Cloud retires models with little notice — `qwen3-next:80b`
+  was pulled 2026-06-16, which is why the fallback chain exists; on a degraded/heads-up
+  alert, probe the model for HTTP 410.)
 - **Never log at INFO around sends.** httpx logs request URLs at INFO and the Telegram token sits in
   the URL path — `__main__._configure_logging` raises httpx/httpcore to WARNING to keep it out of logs.
 - **`ALERT_CHAT_ID` is a DM and is alerts-only** — never digest content. Digests go to `TELEGRAM_CHAT_ID`
@@ -74,7 +76,7 @@ Trending sweeps the remainder):
 
 Env vars (`bot/config.load_config`): **required** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 Optional: `GITHUB_TOKEN`, `STATE_DIR` (=`/data`), `OLLAMA_HOST` (=`https://ollama.com`),
-`OLLAMA_MODEL` (=`gemma4:31b-cloud`; local workstation tags append `-cloud` automatically on ollama.com), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
+`OLLAMA_MODEL` (=`gemma4:31b`, the ollama.com `/api/tags` catalog id; `-cloud` is the local-offload sibling and is tried second), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
 candidates, first reachable wins, base model is the final rung; blank ⇒ curate with `OLLAMA_MODEL`),
 `SEND_DELAY_SECONDS` (=20, spaces messages within a run), `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
 `ALERT_CHAT_ID`. Leave `OLLAMA_HOST` blank to disable all LLM features.
@@ -112,7 +114,7 @@ maintainer-managed in `themes.toml`; if you add a theme, keep slots unique):
 | `slack.py` | `send_slack_message` (never raises, returns bool), `html_to_mrkdwn` |
 | `alerts.py` | `llm_reachable` ping, `model_aliases` / `resolve_curator` / `resolve_title_model`, `send_alert` DM (no-op when `ALERT_CHAT_ID` unset) |
 | `state.py` | `load_state`/`save_state` (atomic `.tmp`+`os.replace`), `unsent`/`record_sent` (keyed by `theme.key`, cap 500) |
-| `ollama.py` | `chat` — single-turn; returns "" on any error (the silent-degradation primitive) |
+| `ollama.py` | `chat` / `chat_accepted` — `/api/chat`; `chat` returns "" on error (silent degradation); `chat_accepted` is HTTP 200 even with blank content |
 
 ## Operating notes
 

@@ -1,6 +1,6 @@
 import time
 
-from bot.ollama import chat
+from bot.ollama import chat_accepted
 from bot.telegram import send_message
 
 # resolve_title_model via= values. "base" includes a working cloud alias of OLLAMA_MODEL.
@@ -10,43 +10,47 @@ TITLE_VIA_NONE = "none"
 
 
 def is_ollama_cloud(host: str) -> bool:
-    """True when `host` is Ollama Cloud (ollama.com), where local `name:size` tags
-    are served as `name:size-cloud`."""
+    """True when `host` is Ollama Cloud's direct API (ollama.com)."""
     return "ollama.com" in (host or "").lower()
 
 
 def model_aliases(model: str, host: str) -> tuple[str, ...]:
     """Names to probe for `model` on `host`, preferred first.
 
-    Ollama Cloud's hosted id for a local-style `name:size` tag is `name:size-cloud`
-    (`gemma4:31b` is a workstation pull; `gemma4:31b-cloud` is what ollama.com
-    serves). Trying the cloud id first means a prod `OLLAMA_MODEL=gemma4:31b`
-    self-heals instead of paging every cron. Local hosts, names that already end
-    in `-cloud`, and names with no `:` tag (cloud-native ids like
-    `deepseek-v4-pro`) are used as-is so we don't burn retries on a fake
-    `-cloud` sibling.
+    Direct ollama.com /api/chat uses catalog ids from /api/tags (`gemma4:31b`).
+    The `-cloud` suffix is the *local daemon* offload tag (`ollama run
+    gemma4:31b-cloud`) and is NOT in the Cloud API catalog. Try the configured
+    name first, then the sibling, so a leftover of either form self-heals
+    without burning retries on the working id. Local hosts and colon-less
+    cloud-native ids (`deepseek-v4-pro`) are used as-is.
     """
     name = (model or "").strip()
     if not name:
         return ()
-    if name.endswith("-cloud") or ":" not in name or not is_ollama_cloud(host):
+    if not is_ollama_cloud(host):
         return (name,)
-    return (f"{name}-cloud", name)
+    if name.endswith("-cloud"):
+        bare = name[: -len("-cloud")]
+        return (name, bare) if bare else (name,)
+    if ":" in name:
+        return (name, f"{name}-cloud")
+    return (name,)
 
 
 def llm_reachable(host: str, model: str, api_key: str = "", client=None,
                   attempts: int = 3, sleep=time.sleep) -> bool:
     """Pre-flight health check: True when no host is configured (LLM unused → not a
-    failure), else True iff a chat ping round-trips within `attempts` tries. A 401/outage
-    makes chat() return "" → retry with backoff, and only a *sustained* failure returns
-    False. The retry matters because chat() collapses every error (5xx, timeout, 429) to
-    "", so a single transient blip on a one-shot ping would otherwise page a healthy model
-    (the 2026-08-19 gemma4:31b heads-up was exactly this — the model was fine seconds
-    later). Backoff mirrors telegram.send_message; `sleep` is injectable for tests."""
+    failure), else True iff a chat ping is *accepted* (HTTP 200) within `attempts`
+    tries. A 200 with blank message.content still counts — Gemma 4's thinking path
+    often leaves content empty (the 2026-08-24 repeating 'gemma4:31b unavailable'
+    heads-up). 401/410/5xx/timeout retry with backoff; only a *sustained* failure
+    returns False. Backoff mirrors telegram.send_message; `sleep` is injectable
+    for tests. Pings send think=False so a healthy Gemma 4 answers quickly."""
     if not host:
         return True
     for attempt in range(attempts):
-        if chat("ping", host=host, model=model, api_key=api_key, client=client):
+        if chat_accepted("ping", host=host, model=model, api_key=api_key,
+                         client=client, think=False):
             return True
         if attempt < attempts - 1:
             sleep(2 ** attempt)
@@ -59,11 +63,10 @@ def resolve_curator(host: str, candidates, base_model: str, api_key: str = "",
     back to `base_model` as the final rung. Returns (model_or_None, skipped), where
     `skipped` is the models tried-and-failed before the chosen one ([] if the first
     works). (None, all_tried) when nothing is reachable → caller degrades to stars.
-    Each configured name is expanded via model_aliases so a last-rung local tag on
-    ollama.com (`gemma4:31b`) still resolves as `gemma4:31b-cloud`. No pings when host
-    is unset (LLM disabled) → (base_model or None, []). Lets a retired/401 primary
-    (the recurring failure mode) self-heal to a working model instead of
-    degrading the whole run."""
+    Each configured name is expanded via model_aliases (catalog id first, then
+    the `-cloud` sibling). No pings when host is unset (LLM disabled) →
+    (base_model or None, []). Lets a retired/401 primary (the recurring failure
+    mode) self-heal to a working model instead of degrading the whole run."""
     if not host:
         return (base_model or None, [])
     order: list = []
@@ -86,8 +89,8 @@ def resolve_title_model(host: str, base_model: str, curator_model: str | None,
                         sleep=time.sleep, ping=None) -> tuple[str, str]:
     """Pick the model for titles + translation.
 
-    Walks cloud aliases of `base_model` (`gemma4:31b` on ollama.com tries
-    `gemma4:31b-cloud` first). If those fail and a curator already resolved,
+    Walks aliases of `base_model` (catalog id first, then the `-cloud` sibling).
+    If those fail and a curator already resolved,
     reuse it — it is known reachable, so do not re-ping. Returns `(model, via)`
     where via is TITLE_VIA_BASE (configured name or its alias), TITLE_VIA_CURATOR
     (fall-through), or TITLE_VIA_NONE (nothing usable).

@@ -37,7 +37,8 @@ def make_titles(repos, host: str = "", model: str = "", api_key: str = "",
         "no quotes). Return ONLY a JSON array of strings, one per repo, in the same order.\n\n"
         f"{listing}"
     )
-    text = chat(prompt, host=host, model=model, api_key=api_key, client=client)
+    text = chat(prompt, host=host, model=model, api_key=api_key, client=client,
+                think=False)
     match = _ARR_RE.search(text)
     if not match:
         return fallback

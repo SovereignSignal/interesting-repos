@@ -7,12 +7,12 @@ from datetime import date, timedelta
 _SINCE_RE = re.compile(r"\{since:(\d+)d\}")
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
-# Default host is Ollama Cloud, whose hosted Gemma tag is `gemma4:31b-cloud`
-# (bare `gemma4:31b` is the local workstation pull and 410s on ollama.com).
-# Local runs should set OLLAMA_HOST=http://localhost:11434 and OLLAMA_MODEL to
-# the local tag. `alerts.model_aliases` still maps a leftover local tag on
-# ollama.com to the `-cloud` sibling, so a stale Railway var self-heals.
-DEFAULT_OLLAMA_MODEL = "gemma4:31b-cloud"
+# Default host is Ollama Cloud. Direct /api/chat catalog id is `gemma4:31b`
+# (confirmed via GET https://ollama.com/api/tags). `gemma4:31b-cloud` is the
+# local-daemon offload tag (`ollama run …`) and is not in that catalog.
+# `alerts.model_aliases` still tries the `-cloud` sibling so a leftover of
+# either form self-heals. Local runs: OLLAMA_HOST=http://localhost:11434.
+DEFAULT_OLLAMA_MODEL = "gemma4:31b"
 
 
 def _parse_at(raw: list) -> tuple:
