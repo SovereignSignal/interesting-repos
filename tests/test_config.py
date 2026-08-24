@@ -1,7 +1,9 @@
 import pytest
 from datetime import date
 from pathlib import Path
-from bot.config import expand_since, load_themes, Theme, load_config, Config
+from bot.config import (
+    expand_since, load_themes, Theme, load_config, Config, DEFAULT_OLLAMA_MODEL,
+)
 
 def test_expand_since_replaces_token_with_iso_date():
     q = expand_since("created:>{since:7d}", today=date(2026, 5, 26))
@@ -46,7 +48,8 @@ def test_load_config_defaults_state_dir_and_blank_optionals():
     cfg = load_config(env=_env(), themes_path=str(SAMPLE))
     assert cfg.state_dir == "/data"
     assert cfg.github_token == ""
-    assert cfg.ollama_host == "https://ollama.com" and cfg.ollama_model == "gemma4:31b"
+    assert cfg.ollama_host == "https://ollama.com" and cfg.ollama_model == DEFAULT_OLLAMA_MODEL
+    assert cfg.ollama_model == "gemma4:31b-cloud"
     assert cfg.ollama_api_key == ""
 
 def test_load_config_missing_required_var_exits():

@@ -15,7 +15,10 @@ from bot.translate import translate_to_english
 from bot.titles import make_titles
 from bot.summaries import make_summaries
 from bot.slack import send_slack_message
-from bot.alerts import resolve_curator, send_alert, llm_reachable
+from bot.alerts import (
+    TITLE_VIA_CURATOR, TITLE_VIA_NONE, resolve_curator, resolve_title_model,
+    send_alert, llm_reachable,
+)
 from bot.state import load_state, save_state, unsent, record_sent
 
 log = logging.getLogger("bot")
@@ -44,16 +47,22 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                         config.ollama_model, config.ollama_api_key)
         if config.ollama_host else (None, []))
     degraded = not dry_run and bool(config.ollama_host) and curator_model is None
-    # The base model (OLLAMA_MODEL) drives titles + translation DIRECTLY, outside the curator
-    # chain. resolve_curator only pings it as the chain's last rung, so a curator that resolves
-    # on an earlier rung leaves the base UNVERIFIED — a retired base (the 2026-07-15 gemma3:12b
-    # retirement) then silently degrades titles/translation to deterministic fallbacks with no
-    # alert. Ping it independently when the chosen curator isn't already the base. Skip when
-    # degraded (whole run is stars-only anyway) or when curator IS the base (already reachable).
-    base_model_down = (
-        not dry_run and bool(config.ollama_host) and not degraded
-        and curator_model != config.ollama_model
-        and not llm_reachable(config.ollama_host, config.ollama_model, config.ollama_api_key))
+    # Titles + translation used to call OLLAMA_MODEL directly. On Ollama Cloud the
+    # hosted Gemma tag is `gemma4:31b-cloud`; a leftover local tag (`gemma4:31b`)
+    # 410s every run and used to page "titles fell back to deterministic" even
+    # though the cloud sibling was healthy. resolve_title_model tries that alias
+    # first, then reuses the already-resolved curator — never a silent
+    # deterministic fallback while a live model is sitting in the chain.
+    # Skip when degraded (whole run is stars-only; don't re-ping a dead base).
+    if not config.ollama_host or curator_model is None:
+        title_model, title_via = "", TITLE_VIA_NONE
+    else:
+        title_model, title_via = resolve_title_model(
+            config.ollama_host, config.ollama_model, curator_model,
+            config.ollama_api_key, ping=llm_reachable)
+        if title_model != config.ollama_model:
+            log.info("titles/translation using %s (configured base %s, via %s)",
+                     title_model, config.ollama_model, title_via)
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
@@ -62,7 +71,8 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
 
     def translate(text):
         return translate_to_english(text, host=config.ollama_host,
-                                    model=config.ollama_model, api_key=config.ollama_api_key)
+                                    model=title_model or config.ollama_model,
+                                    api_key=config.ollama_api_key)
 
     # Phase 1 — select. Catch-all themes (e.g. Trending) are processed LAST so they
     # cannot duplicate a specific theme's picks; `claimed` enforces one theme per repo.
@@ -141,7 +151,8 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
                                            model=curator_model or "", api_key=config.ollama_api_key)
             titles = make_titles(repos_, host=config.ollama_host,
-                                 model=config.ollama_model, api_key=config.ollama_api_key)
+                                 model=title_model or config.ollama_model,
+                                 api_key=config.ollama_api_key)
             deltas = None
             if theme.delta_days:    # annotate the meta line with '+N★ this week'
                 base = baselines.get(theme.key, {})
@@ -186,14 +197,15 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                        f"⚠️ interesting-repos: curator model(s) {', '.join(curator_skipped)} "
                        f"unavailable — ran on {curator_model}. "
                        "Update OLLAMA_CURATOR_MODEL in Railway.")
-        if base_model_down:
-            # the base model (titles + translation) is down but curation is fine — the run is
-            # NOT degraded, just shipping deterministic titles and untranslated text. Independent
-            # of the curator branch above: both can fire (a fallback curator AND a dead base).
+        if title_via == TITLE_VIA_CURATOR:
+            # base name + cloud alias both down, but curation is fine — titles/translation
+            # ran on the curator rather than deterministic fallbacks. Independent of the
+            # curator-skipped branch above: both can fire (a fallback curator AND a dead
+            # base). A working cloud alias of OLLAMA_MODEL is via=base and stays silent.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: base model {config.ollama_model} unavailable — "
-                       "titles and translation fell back to deterministic output "
-                       f"(curation unaffected on {curator_model}). "
+                       f"titles and translation ran on {title_model} "
+                       "(curation unaffected). "
                        "Update OLLAMA_MODEL in Railway.")
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
