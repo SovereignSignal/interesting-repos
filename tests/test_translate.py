@@ -41,6 +41,7 @@ def test_translate_calls_ollama_chat_and_sends_auth():
         body = json.loads(request.content)
         seen["model"] = body["model"]
         seen["stream"] = body["stream"]
+        seen["think"] = body.get("think")
         return httpx.Response(200, json={"message": {"content": "WeChat bill analysis tool"}})
     out = translate_to_english("微信账单分析工具", model="gemma3:12b",
                                api_key="key", client=_client(handler))
@@ -48,6 +49,7 @@ def test_translate_calls_ollama_chat_and_sends_auth():
     assert seen["path"] == "/api/chat"
     assert seen["auth"] == "Bearer key"
     assert seen["model"] == "gemma3:12b" and seen["stream"] is False
+    assert seen["think"] is False
 
 
 def test_translate_omits_auth_without_key():

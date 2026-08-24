@@ -38,4 +38,5 @@ def translate_to_english(text: str, host: str = _DEFAULT_HOST, model: str = _DEF
         "Return ONLY the translation, with no quotes or extra notes:\n\n"
         f"{text}"
     )
-    return chat(prompt, host=host, model=model, api_key=api_key, client=client) or text
+    return chat(prompt, host=host, model=model, api_key=api_key, client=client,
+                think=False) or text

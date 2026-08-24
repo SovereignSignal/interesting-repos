@@ -47,13 +47,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                         config.ollama_model, config.ollama_api_key)
         if config.ollama_host else (None, []))
     degraded = not dry_run and bool(config.ollama_host) and curator_model is None
-    # Titles + translation used to call OLLAMA_MODEL directly. On Ollama Cloud the
-    # hosted Gemma tag is `gemma4:31b-cloud`; a leftover local tag (`gemma4:31b`)
-    # 410s every run and used to page "titles fell back to deterministic" even
-    # though the cloud sibling was healthy. resolve_title_model tries that alias
-    # first, then reuses the already-resolved curator — never a silent
-    # deterministic fallback while a live model is sitting in the chain.
-    # Skip when degraded (whole run is stars-only; don't re-ping a dead base).
+    # Titles + translation sit outside the curator chain. A 200 with blank
+    # content (Gemma 4 thinking) used to look like "base unavailable" and page
+    # every cron; llm_reachable now treats HTTP 200 as live, and titles/translation
+    # send think=False so content is actually filled. resolve_title_model also
+    # tries the `-cloud` sibling of a leftover local-offload tag. Skip when
+    # degraded (whole run is stars-only; don't re-ping a dead base).
     if not config.ollama_host or curator_model is None:
         title_model, title_via = "", TITLE_VIA_NONE
     else:

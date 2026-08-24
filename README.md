@@ -42,13 +42,13 @@ only for failure/degradation alerts — never for digest content.
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
-are auto-translated to English via an **Ollama** chat model (default `gemma4:31b-cloud`).
+are auto-translated to English via an **Ollama** chat model (default `gemma4:31b`).
 Use Ollama Cloud (`OLLAMA_HOST=https://ollama.com` + `OLLAMA_API_KEY` from
-ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434` and a local tag
-such as `OLLAMA_MODEL=gemma4:31b`, no key). On Cloud, a leftover local-style tag
-(`gemma4:31b`) is tried as `gemma4:31b-cloud` first so titles keep working.
-Leave `OLLAMA_HOST` blank to disable. English/Latin text is never sent to the model,
-and any translation error falls back to the original text.
+ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434`, no key).
+The Cloud API catalog id is `gemma4:31b`; `gemma4:31b-cloud` is the local-daemon
+offload tag. Either form is accepted. Leave `OLLAMA_HOST` blank to disable.
+English/Latin text is never sent to the model, and any translation error falls
+back to the original text.
 `OLLAMA_CURATOR_MODEL` — stronger model(s) for curation scoring and summaries. Set a
 comma-separated list (e.g. `deepseek-v3.1:671b,gpt-oss:120b`) for an ordered fallback
 chain: at startup the bot picks the first reachable one, and if all are down it falls

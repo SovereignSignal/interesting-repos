@@ -27,9 +27,14 @@ def test_make_titles_without_host_uses_prettify():
 
 def test_make_titles_uses_model_output():
     repos = [R("a/b"), R("c/d")]
-    out = make_titles(repos, host="http://x", model="m", api_key="k",
-                      client=_content_client('["Title One", "Title Two"]'))
+    seen = {}
+    def handler(request):
+        seen["think"] = __import__("json").loads(request.content).get("think")
+        return httpx.Response(200, json={"message": {"content": '["Title One", "Title Two"]'}})
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    out = make_titles(repos, host="http://x", model="m", api_key="k", client=client)
     assert out == ["Title One", "Title Two"]
+    assert seen["think"] is False
 
 
 def test_make_titles_falls_back_on_length_mismatch():
