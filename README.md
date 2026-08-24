@@ -42,9 +42,11 @@ only for failure/degradation alerts — never for digest content.
 
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
-are auto-translated to English via an **Ollama** chat model (default `gemma3:12b`).
+are auto-translated to English via an **Ollama** chat model (default `gemma4:31b-cloud`).
 Use Ollama Cloud (`OLLAMA_HOST=https://ollama.com` + `OLLAMA_API_KEY` from
-ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434`, no key).
+ollama.com) or a local server (`OLLAMA_HOST=http://localhost:11434` and a local tag
+such as `OLLAMA_MODEL=gemma4:31b`, no key). On Cloud, a leftover local-style tag
+(`gemma4:31b`) is tried as `gemma4:31b-cloud` first so titles keep working.
 Leave `OLLAMA_HOST` blank to disable. English/Latin text is never sent to the model,
 and any translation error falls back to the original text.
 `OLLAMA_CURATOR_MODEL` — stronger model(s) for curation scoring and summaries. Set a

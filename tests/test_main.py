@@ -235,7 +235,8 @@ def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: ["LLM blurb here."])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
     # curator resolves to the base model -> no real pre-flight pings (avoids retry backoff)
-    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gemma4:31b", []))
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("gemma4:31b-cloud", []))
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
     main.run(_cfg(tmp_path, [theme], ollama="http://x"), now=datetime(2026, 6, 4))
     assert any("LLM blurb here." in m for m in sent)
@@ -337,14 +338,18 @@ def test_run_no_alert_when_primary_curator_works(tmp_path, monkeypatch):
 
 def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
     # The curator resolved to a non-base model, so resolve_curator never pinged the base
-    # model (OLLAMA_MODEL, drives titles + translation). It's retired -> titles/translation
-    # silently degrade to deterministic fallbacks. A heads-up DM must fire; the run is NOT
-    # degraded (curation is fine). This is the 2026-07-15 gemma3:12b retirement.
-    alerts = []
+    # model (OLLAMA_MODEL, drives titles + translation). It's retired. Titles/translation
+    # must run on the live curator (not deterministic fallbacks) and a heads-up DM must
+    # fire; the run is NOT degraded (curation is fine). This is the 2026-07-15 gemma3:12b
+    # retirement. Host is not ollama.com, so no -cloud alias is tried.
+    alerts, titles_model = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
     monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
-    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    def fake_titles(repos, model="", **k):
+        titles_model["model"] = model
+        return ["T"]
+    monkeypatch.setattr(main, "make_titles", fake_titles)
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
@@ -358,8 +363,70 @@ def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
                  ollama_curator_models=("gpt-oss:120b",), alert_chat_id="d")
     failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert failures == 0 and len(alerts) == 1
+    assert titles_model["model"] == "gpt-oss:120b"    # curator, not deterministic
     assert "gemma3:12b" in alerts[0] and "OLLAMA_MODEL" in alerts[0]
+    assert "ran on gpt-oss:120b" in alerts[0]
+    assert "deterministic" not in alerts[0]
     assert "Ollama unreachable" not in alerts[0]      # heads-up, not the degraded alert
+
+
+def test_run_no_base_alert_when_cloud_alias_reachable(tmp_path, monkeypatch):
+    # Prod leftover: OLLAMA_MODEL=gemma4:31b on ollama.com. The local tag 410s; the
+    # hosted sibling gemma4:31b-cloud is fine. Titles must use the alias and stay silent
+    # — this is the alert that used to page every cron. Curator is a different model.
+    alerts, models = [], {}
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    def fake_titles(repos, model="", **k):
+        models["titles"] = model
+        return ["T"]
+    monkeypatch.setattr(main, "make_titles", fake_titles)
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("deepseek-v4-pro", []))
+    monkeypatch.setattr(main, "llm_reachable",
+                        lambda host, model, *a, **k: model != "gemma4:31b")
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "https://ollama.com", ollama_model="gemma4:31b",
+                 ollama_curator_models=("deepseek-v4-pro",), alert_chat_id="d")
+    main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert alerts == []
+    assert models["titles"] == "gemma4:31b-cloud"
+
+
+def test_run_heads_up_when_base_and_cloud_alias_dead_uses_curator(tmp_path, monkeypatch):
+    # Both the configured tag and its -cloud sibling are gone (true retirement).
+    # Titles run on the curator; a heads-up fires. Not a degraded/stars-only run.
+    alerts, models = [], {}
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    def fake_titles(repos, model="", **k):
+        models["titles"] = model
+        return ["T"]
+    monkeypatch.setattr(main, "make_titles", fake_titles)
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("deepseek-v4-pro", []))
+    dead = {"gemma4:31b", "gemma4:31b-cloud"}
+    monkeypatch.setattr(main, "llm_reachable",
+                        lambda host, model, *a, **k: model not in dead)
+    monkeypatch.setattr(main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path),
+                 [Theme(key="t", name="T", emoji="", query="q", count=1)],
+                 "https://ollama.com", ollama_model="gemma4:31b",
+                 ollama_curator_models=("deepseek-v4-pro",), alert_chat_id="d")
+    failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and len(alerts) == 1
+    assert models["titles"] == "deepseek-v4-pro"
+    assert "ran on deepseek-v4-pro" in alerts[0]
+    assert "deterministic" not in alerts[0]
+    assert "Ollama unreachable" not in alerts[0]
 
 
 def test_run_no_base_alert_when_base_model_reachable(tmp_path, monkeypatch):

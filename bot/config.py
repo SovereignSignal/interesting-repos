@@ -7,6 +7,13 @@ from datetime import date, timedelta
 _SINCE_RE = re.compile(r"\{since:(\d+)d\}")
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
+# Default host is Ollama Cloud, whose hosted Gemma tag is `gemma4:31b-cloud`
+# (bare `gemma4:31b` is the local workstation pull and 410s on ollama.com).
+# Local runs should set OLLAMA_HOST=http://localhost:11434 and OLLAMA_MODEL to
+# the local tag. `alerts.model_aliases` still maps a leftover local tag on
+# ollama.com to the `-cloud` sibling, so a stale Railway var self-heals.
+DEFAULT_OLLAMA_MODEL = "gemma4:31b-cloud"
+
 
 def _parse_at(raw: list) -> tuple:
     """Parse ["mon 13", "thu 16"] into ((0, 13), (3, 16)) — (weekday, UTC hour) pairs.
@@ -88,7 +95,7 @@ class Config:
     state_dir: str
     themes: list[Theme]
     ollama_host: str = "https://ollama.com"
-    ollama_model: str = "gemma4:31b"
+    ollama_model: str = DEFAULT_OLLAMA_MODEL
     ollama_api_key: str = ""
     ollama_curator_models: tuple = ()   # ordered curator candidates; first reachable wins
     send_delay_seconds: float = 0
@@ -113,7 +120,7 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
         state_dir=env.get("STATE_DIR", "/data"),
         themes=load_themes(themes_path),
         ollama_host=env.get("OLLAMA_HOST", "https://ollama.com"),
-        ollama_model=env.get("OLLAMA_MODEL", "gemma4:31b"),
+        ollama_model=env.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
         ollama_api_key=env.get("OLLAMA_API_KEY", ""),
         ollama_curator_models=tuple(
             m.strip() for m in env.get("OLLAMA_CURATOR_MODEL", "").split(",") if m.strip()),

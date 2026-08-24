@@ -1,5 +1,6 @@
 import re
 
+from bot.config import DEFAULT_OLLAMA_MODEL
 from bot.ollama import chat
 
 # Scripts we translate to English. Latin-script text (incl. accented European
@@ -16,7 +17,7 @@ _NON_LATIN = re.compile(
 )
 
 _DEFAULT_HOST = "https://ollama.com"
-_DEFAULT_MODEL = "gemma4:31b"
+_DEFAULT_MODEL = DEFAULT_OLLAMA_MODEL
 
 
 def needs_translation(text: str) -> bool:
