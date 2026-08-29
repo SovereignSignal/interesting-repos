@@ -104,11 +104,28 @@ def _owner_has_ai_token(repo) -> bool:
     return any(tok == "ai" for tok in _OWNER_SEP_RE.split(owner) if tok)
 
 
-def is_ai_repo(repo) -> bool:
+def _has_ai_marker(blob: str) -> bool:
+    """Phrase markers are substring matches; single tokens use word boundaries so
+    'cursor' does not fire on 'precursor'."""
+    blob = blob.lower()
+    for m in _AI_MARKERS:
+        if " " in m or "-" in m:
+            if m in blob:
+                return True
+        elif re.search(rf"\b{re.escape(m)}\b", blob):
+            return True
+    return False
+
+
+def is_empty_metadata(repo) -> bool:
+    return not (repo.description or "").strip() and not repo.topics
+
+
+def is_ai_repo(repo, readme: str = "") -> bool:
     """Broad: any AI / agent / LLM repo (a skill pack, an AI topic, an AI marker in
-    the name/description, or an 'ai' token in the owner login). Used only for the
-    cap=0 (non-AI highlight) policy, where aggressive exclusion is intended and
-    false positives are harmless."""
+    the name/description, or an 'ai' token in the owner login). Used for cap=0
+    and `ai_cap`. Optional `readme` covers the empty-metadata leak (a bare name
+    plus a README that is clearly an agent/skill card)."""
     if is_agent_skill_pack(repo):
         return True
     if {t.lower() for t in repo.topics} & _AI_TOPICS:
@@ -116,7 +133,30 @@ def is_ai_repo(repo) -> bool:
     if _owner_has_ai_token(repo):
         return True
     blob = (repo.full_name + " " + (repo.description or "")).lower()
-    return any(m in blob for m in _AI_MARKERS)
+    if _has_ai_marker(blob):
+        return True
+    if readme and is_empty_metadata(repo) and _has_ai_marker(readme):
+        return True
+    return False
+
+
+def cap_ai(repos: list, cap) -> list:
+    """Shape a theme's candidate pool per its ai_cap (order preserved):
+    None → unchanged; 0 → drop every is_ai_repo; N → keep all non-AI plus
+    at most N AI repos (packs or standalone tools). Distinct from
+    cap_agent_skills, which only limits skill *packs*."""
+    if cap is None:
+        return repos
+    if cap == 0:
+        return [r for r in repos if not is_ai_repo(r)]
+    out, n_ai = [], 0
+    for r in repos:
+        if is_ai_repo(r):
+            if n_ai >= cap:
+                continue
+            n_ai += 1
+        out.append(r)
+    return out
 
 
 def cap_agent_skills(repos: list, cap) -> list:

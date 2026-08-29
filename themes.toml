@@ -26,6 +26,7 @@ count = 7
 rank  = "llm"
 catch_all = true
 agent_skill_cap = 0
+ai_cap = 0
 at = ["mon 13", "thu 13"]
 profile = "Breakout projects from the last few months that a broad developer audience genuinely finds interesting — novel tools, frameworks, models, or apps with real substance and momentum. Favor variety across domains."
 
@@ -49,6 +50,7 @@ sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["wed 13", "sat 13"]
 profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and developer-experience projects with real utility."
 
@@ -56,11 +58,13 @@ profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and d
 key   = "crypto"
 name  = "Crypto & Web3"
 emoji = "⛓️"
-query = ["topic:web3 created:>{since:120d}", "topic:blockchain created:>{since:120d}"]
+query = ["topic:web3 created:>{since:120d} stars:>10", "topic:blockchain created:>{since:120d} stars:>10"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
+min_score = 7
 at = ["mon 16", "thu 16"]
 profile = "Substantive crypto / web3 / DeFi projects — protocols, infrastructure, SDKs, research, tooling. AGGRESSIVELY exclude pump-and-dump bots, airdrop/scam repos, keyword-stuffed SEO repos (e.g. a name or description that repeats the same words), and low-effort token shills."
 
@@ -70,11 +74,13 @@ name  = "Finance & Quant"
 emoji = "💰"
 query = ["finance created:>{since:180d} stars:>50",
          "topic:quant created:>{since:180d} stars:>20",
-         "topic:trading created:>{since:180d} stars:>20"]
+         "topic:trading created:>{since:180d} stars:>20",
+         "topic:quant pushed:>{since:30d} stars:>20"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["tue 16", "fri 16"]
 profile = "Serious quantitative finance, algorithmic trading, market-data, and fintech projects with real engineering substance. Exclude scams and get-rich-quick repos."
 
@@ -87,6 +93,7 @@ sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["wed 16", "sat 16"]
 profile = "Substantive security tooling — offensive, defensive, cloud, or AI/agent security. Favor real tools and research; exclude low-effort or spam repos."
 
@@ -96,11 +103,13 @@ name  = "Systems & Languages"
 emoji = "⚙️"
 query = ["topic:systems-programming created:>{since:180d}",
          "topic:compiler created:>{since:180d}",
-         "language:Zig created:>{since:180d} stars:>10"]
+         "language:Zig created:>{since:180d} stars:>10",
+         "topic:compiler pushed:>{since:30d} stars:>50"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["mon 19", "fri 19"]
 profile = "Substantive systems & low-level work — languages, compilers, runtimes, OS, emulators, allocators, performance engineering. Favor real implementations over tutorials or skill packs."
 
@@ -110,11 +119,13 @@ name  = "Data & Databases"
 emoji = "🗄️"
 query = ["topic:database created:>{since:120d} stars:>10",
          "topic:data-engineering created:>{since:120d} stars:>10",
-         "topic:postgresql created:>{since:120d} stars:>10"]
+         "topic:postgresql created:>{since:120d} stars:>10",
+         "topic:database pushed:>{since:30d} stars:>50"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["tue 19", "sat 19"]
 profile = "Substantive databases, query and storage engines, data pipelines, and analytics tooling with real engineering. Favor standalone tools and engines over agent-skill packs."
 
@@ -123,11 +134,13 @@ key   = "web"
 name  = "Web & Frontend"
 emoji = "🌐"
 query = ["topic:frontend created:>{since:120d} stars:>10",
-         "topic:react created:>{since:120d} stars:>20"]
+         "topic:react created:>{since:120d} stars:>20",
+         "topic:frontend pushed:>{since:30d} stars:>50"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["wed 19", "sun 13"]
 profile = "Substantive web and frontend projects — frameworks, build tools, UI toolkits, browsers, rendering — with real utility. Favor standalone tools over design-agent skill packs."
 
@@ -136,11 +149,13 @@ key   = "science"
 name  = "Science & Simulation"
 emoji = "🔬"
 query = ["topic:scientific-computing created:>{since:180d} stars:>5",
-         "topic:simulation created:>{since:180d} stars:>5"]
+         "topic:simulation created:>{since:180d} stars:>5",
+         "topic:scientific-computing pushed:>{since:30d} stars:>20"]
 sort  = "stars"
 count = 7
 rank  = "llm"
 agent_skill_cap = 2
+ai_cap = 2
 at = ["thu 19", "sun 16"]
 profile = "Substantive scientific computing and simulation — numerical methods, physics and engineering simulation, scientific ML (PINNs and similar), graphics and compute. Favor real research code and engines."
 
@@ -154,6 +169,78 @@ count = 7
 rank  = "llm"
 delta_days = 7
 agent_skill_cap = 2          # keep a real viral AI tool, cut clone/skill packs
+ai_cap = 4                   # breakouts may be AI; not a monopoly
 min_score = 7               # higher bar — we're featuring "what blew up"
-at = ["sun 19"]             # the grid's only empty slot — one firing/week
+at = ["sun 19"]             # one firing/week
 profile = "Real breakouts with genuine momentum this week — repos whose star growth reflects substance (a novel tool, an inflection point, a real release), not manufactured hype. Aggressively discount anything whose velocity looks bought or coordinated, agent-skill clone packs, and forks riding a parent's fame. If the growth is real but the project is thin, it is not a mover."
+
+# Fourth cron hour (10:00 UTC) — new domains. One-per-slot invariant holds.
+
+[[theme]]
+key   = "robotics"
+name  = "Robotics"
+emoji = "🦾"
+query = "topic:robotics created:>{since:180d} stars:>10"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+ai_cap = 2
+at = ["mon 10", "sat 10"]
+profile = "Substantive robotics — control, perception, simulation, hardware interfaces, and robot software that engineers would actually use or learn from. Favor real implementations over course dumps and skill packs."
+
+[[theme]]
+key   = "gamedev"
+name  = "Game Dev"
+emoji = "🎮"
+query = ["topic:game-development created:>{since:180d} stars:>10",
+         "topic:gamedev created:>{since:180d} stars:>10"]
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+ai_cap = 2
+at = ["tue 10", "sun 10"]
+profile = "Substantive game-development tools, engines, editors, and libraries with real engineering. Favor standalone tools over asset packs and tutorial repos."
+
+[[theme]]
+key   = "embedded"
+name  = "Embedded & Hardware"
+emoji = "🔌"
+query = ["topic:embedded created:>{since:180d} stars:>10",
+         "topic:firmware created:>{since:180d} stars:>10"]
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+ai_cap = 2
+at = ["wed 10"]
+profile = "Substantive embedded and hardware work — firmware, RTOS, drivers, MCU tooling, and hardware-adjacent software. Favor real implementations over blink-an-LED tutorials."
+
+[[theme]]
+key   = "privacy"
+name  = "Privacy"
+emoji = "🕶️"
+query = "topic:privacy created:>{since:120d} stars:>20"
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+ai_cap = 2
+at = ["thu 10"]
+profile = "Substantive privacy tooling — encryption, anti-tracking, secure messaging, and anonymity infrastructure with real engineering. Exclude VPN affiliate spam and keyword-stuffed SEO repos."
+
+[[theme]]
+key   = "mobile"
+name  = "Mobile"
+emoji = "📱"
+query = ["topic:android created:>{since:120d} stars:>20",
+         "topic:ios created:>{since:120d} stars:>20"]
+sort  = "stars"
+count = 7
+rank  = "llm"
+agent_skill_cap = 2
+ai_cap = 2
+at = ["fri 10"]
+profile = "Substantive mobile projects — Android and iOS frameworks, tooling, and apps with real utility. Favor standalone libraries and tools over clone apps and skill packs."
+

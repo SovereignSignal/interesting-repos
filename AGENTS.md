@@ -12,21 +12,22 @@ it with `--dry-run`, which prints the digest instead of sending to Telegram/Slac
 - **Use the project venv:** run everything via `.venv/bin/python` (the startup update script builds
   it). There is **no linter** configured — only `pytest` and the `--dry-run` app run.
 - **Tests are fully mocked / network-free and fast** (~0.4s for ~190 tests): `.venv/bin/python -m pytest`.
-- **`--dry-run` still requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`** to be set (see
-  `config.load_config`), even though nothing is sent — any dummy values work (e.g. `TELEGRAM_BOT_TOKEN=dummy TELEGRAM_CHAT_ID=-100`).
+- **`--dry-run` does not require Telegram credentials.** `load_config(..., require_telegram=False)`
+  fills dummy token/chat. Live sends still require `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+  Force a slot with `--now 2026-08-28T13:00:00Z` or a single theme with `--theme trending`
+  (strips `at`, so you do not need to copy `themes.toml`).
 - **`STATE_DIR` defaults to `/data`** (the Railway volume), which doesn't exist here — set it to a
   writable temp dir for local runs, e.g. `STATE_DIR=/tmp/ir-state`.
 - **Leave `OLLAMA_HOST` blank to disable all LLM calls** (curation, titles, summaries, translation).
   With no Ollama key available, this is the way to run end-to-end: themes fall back to top-by-stars
   and descriptions/titles use deterministic fallbacks. It still hits the **real** GitHub Search API
   (works unauthenticated at a low rate limit; set `GITHUB_TOKEN` to raise it).
-- **Slot matching applies to dry runs too:** a theme only fires when the run's UTC `(weekday, hour)`
-  matches one of its `at` slots (grid in `CLAUDE.md`). To force a specific theme regardless of the
-  clock, copy `themes.toml`, strip the `at` lines, and pass `--themes <copy>` (per `CLAUDE.md`).
+- **Slot matching applies to dry runs too** unless you pass `--theme KEY` (strips `at`) or
+  `--now` to pick a grid cell. Grid is in `CLAUDE.md`.
 
 Example end-to-end dry run:
 
 ```bash
-TELEGRAM_BOT_TOKEN=dummy TELEGRAM_CHAT_ID=-100 OLLAMA_HOST= \
-  STATE_DIR=/tmp/ir-state .venv/bin/python -m bot --dry-run
+OLLAMA_HOST= STATE_DIR=/tmp/ir-state \
+  .venv/bin/python -m bot --dry-run --theme trending
 ```

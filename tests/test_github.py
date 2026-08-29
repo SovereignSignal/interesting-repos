@@ -48,7 +48,31 @@ def test_search_repos_sends_query_sort_order_and_parses_items():
     assert "q=created" in captured["url"]
     assert "sort=stars" in captured["url"] and "order=desc" in captured["url"]
     assert "per_page=50" in captured["url"]
+    assert "page=1" in captured["url"]
     assert captured["auth"] == "Bearer gh"
+
+
+def test_search_repos_default_per_page_is_100_and_sends_page():
+    captured = {}
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"items": []})
+    search_repos("x", client=_client(handler), page=2)
+    assert "per_page=100" in captured["url"]
+    assert "page=2" in captured["url"]
+
+
+def test_search_repos_retries_on_429_honoring_retry_after():
+    calls = {"n": 0}
+    slept = []
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return httpx.Response(429, headers={"Retry-After": "7"}, json={})
+        return httpx.Response(200, json={"items": [ITEM]})
+    repos = search_repos("x", client=_client(handler), retries=3, sleep=slept.append)
+    assert len(repos) == 1 and calls["n"] == 2
+    assert 7.0 in slept
 
 def test_search_repos_omits_auth_without_token():
     def handler(request):
@@ -104,7 +128,7 @@ def test_parse_repo_normalizes_missing_or_unrecognized_license():
     assert r.forks == 0 and r.owner_type == ""                                 # engagement/owner default
 
 
-from bot.github import readme_excerpt
+from bot.github import readme_excerpt, readme_parts, first_line_from, excerpt_from
 
 
 def test_readme_excerpt_joins_real_lines_up_to_max():
@@ -119,3 +143,12 @@ def test_readme_excerpt_truncates_to_max_chars():
 
 def test_readme_excerpt_returns_empty_on_error():
     assert readme_excerpt("a/b", client=_readme_client("nope", status=404)) == ""
+
+
+def test_readme_parts_is_one_fetch_first_line_and_excerpt():
+    body = "# Title\n\nThe real first sentence.\nSecond line.\n"
+    first, excerpt = readme_parts("a/b", client=_readme_client(body))
+    assert first == "The real first sentence."
+    assert excerpt == "The real first sentence. Second line."
+    assert first_line_from(body) == first
+    assert excerpt_from(body) == excerpt

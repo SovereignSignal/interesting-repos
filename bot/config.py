@@ -53,6 +53,7 @@ class Theme:
     catch_all: bool = False
     max_idle_days: int = 60
     agent_skill_cap: int | None = None
+    ai_cap: int | None = None       # None unchanged; 0 drop all AI; N at most N AI repos
     min_score: int = 6    # curator score a repo must reach to be posted (0-10)
     delta_days: int | None = None   # set => source candidates by N-day star growth (Movers)
     at: tuple | None = None
@@ -80,6 +81,7 @@ def load_themes(path: str) -> list[Theme]:
             catch_all=t.get("catch_all", False),
             max_idle_days=t.get("max_idle_days", 60),
             agent_skill_cap=t.get("agent_skill_cap"),
+            ai_cap=t.get("ai_cap"),
             min_score=t.get("min_score", 6),
             delta_days=t.get("delta_days"),
             at=at,
@@ -104,7 +106,8 @@ class Config:
     alert_chat_id: str = ""
 
 
-def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Config:
+def load_config(env: dict | None = None, themes_path: str = "themes.toml",
+                require_telegram: bool = True) -> Config:
     env = os.environ if env is None else env
 
     def require(name: str) -> str:
@@ -113,9 +116,16 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml") -> Co
             raise SystemExit(f"Missing required environment variable: {name}")
         return val
 
+    if require_telegram:
+        telegram_bot_token = require("TELEGRAM_BOT_TOKEN")
+        telegram_chat_id = require("TELEGRAM_CHAT_ID")
+    else:
+        telegram_bot_token = env.get("TELEGRAM_BOT_TOKEN") or "dry-run"
+        telegram_chat_id = env.get("TELEGRAM_CHAT_ID") or "0"
+
     return Config(
-        telegram_bot_token=require("TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=require("TELEGRAM_CHAT_ID"),
+        telegram_bot_token=telegram_bot_token,
+        telegram_chat_id=telegram_chat_id,
         github_token=env.get("GITHUB_TOKEN", ""),
         state_dir=env.get("STATE_DIR", "/data"),
         themes=load_themes(themes_path),
