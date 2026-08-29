@@ -200,7 +200,7 @@ def test_run_alerts_when_llm_degraded(tmp_path, monkeypatch):
     alerts = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
@@ -230,7 +230,7 @@ def test_run_uses_llm_summaries_in_output(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "readme stuff")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", "readme stuff"))
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["Title"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: ["LLM blurb here."])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
@@ -277,7 +277,7 @@ def test_run_passes_curator_whys_to_summaries(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "ex")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", "ex"))
     monkeypatch.setattr(main, "rank",
                         lambda repos, theme, **k: [Pick(repos[0], "novel rust db")])
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
@@ -299,7 +299,7 @@ def test_run_heads_up_alert_on_curator_fallback(tmp_path, monkeypatch):
     alerts = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
@@ -321,7 +321,7 @@ def test_run_no_alert_when_primary_curator_works(tmp_path, monkeypatch):
     alerts = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
@@ -345,7 +345,7 @@ def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
     alerts, titles_model = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     def fake_titles(repos, model="", **k):
         titles_model["model"] = model
         return ["T"]
@@ -377,7 +377,7 @@ def test_run_no_base_alert_when_cloud_alias_reachable(tmp_path, monkeypatch):
     alerts, models = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     def fake_titles(repos, model="", **k):
         models["titles"] = model
         return ["T"]
@@ -404,7 +404,7 @@ def test_run_heads_up_when_base_and_cloud_alias_dead_uses_curator(tmp_path, monk
     alerts, models = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     def fake_titles(repos, model="", **k):
         models["titles"] = model
         return ["T"]
@@ -434,7 +434,7 @@ def test_run_no_base_alert_when_base_model_reachable(tmp_path, monkeypatch):
     alerts = []
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
     monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
@@ -476,7 +476,7 @@ def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypat
     models = {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
-    monkeypatch.setattr(main, "readme_excerpt", lambda *a, **k: "ex")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", "ex"))
     def fake_rank(repos, theme, ollama_model="", **k):
         models["rank"] = ollama_model
         return [Pick(repos[0], "w")]
@@ -619,3 +619,110 @@ def test_run_survives_snapshot_write_failure(tmp_path, monkeypatch, caplog):
     assert failures == 0           # not counted as a theme failure
     assert len(sent) == 1          # Phase 2 still delivered
     assert "snapshot" in caplog.text.lower()   # warned, not crashed
+
+
+def test_run_ai_cap_limits_standalone_ai_tools(tmp_path, monkeypatch):
+    sent = []
+    a1 = Repo(1, "a/gstack", "u", "Claude Code setup", 100, "Py", [], False, False)
+    a2 = Repo(2, "b/harness", "u", "an llm gateway", 90, "Py", [], False, False)
+    a3 = Repo(3, "c/agent", "u", "coding agent runtime", 80, "Py", [], False, False)
+    tool = Repo(4, "d/realdb", "u", "a database engine", 70, "Py", [], False, False)
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [a1, a2, a3, tool])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="dev", name="D", emoji="", query="q", count=5, ai_cap=2)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert sorted(saved["dev"]) == [1, 2, 4]   # two AI + the non-AI; a3 dropped
+
+
+def test_run_skips_globally_posted_repos(tmp_path, monkeypatch):
+    sent = []
+    (tmp_path / "state.json").write_text('{"_posted": [1], "other": [1]}')
+    _patch(monkeypatch, [_repo(1, 10), _repo(2, 20)], sent)
+    theme = Theme(key="t", name="T", emoji="", query="q", count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["t"] == [2]
+    assert 2 in saved["_posted"] and 1 in saved["_posted"]
+
+
+def test_run_movers_exempt_from_global_posted(tmp_path, monkeypatch):
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})
+    sent = []
+    (tmp_path / "state.json").write_text('{"_posted": [1], "trending": [1]}')
+    from bot.ranker import Pick
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 250)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="M", emoji="🚀", query="q", count=1, delta_days=7)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert sent   # posted again as a mover despite _posted
+
+
+def test_run_dry_run_does_not_persist_posted(tmp_path, monkeypatch):
+    _patch(monkeypatch, [_repo(1, 10)], [])
+    theme = Theme(key="t", name="T", emoji="", query="q", count=1)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4), dry_run=True)
+    assert not (tmp_path / "state.json").exists()
+
+
+def test_run_hides_velocity_badge_when_younger_than_two_days(tmp_path, monkeypatch):
+    sent = []
+    young = Repo(1, "a/1", "https://x/1", "desc", 88057, "Py", [], False, False,
+                 created_at="2026-06-08T00:00:00Z")  # 0 days old
+    old = Repo(2, "a/2", "https://x/2", "desc", 300, "Py", [], False, False,
+               created_at="2026-06-01T00:00:00Z")     # 7 days old
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [young, old])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="t", name="T", emoji="", query="q", count=2)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    body = "\n".join(sent)
+    assert "88,057★/day" not in body and "88057★/day" not in body
+    assert "43★/day" in body   # 300/7
+
+
+def test_run_cap_zero_drops_empty_metadata_readme_ai(tmp_path, monkeypatch):
+    leak = Repo(1, "acme/untitled", "u", "", 100, "Py", [], False, False)
+    keep = Repo(2, "b/db", "u", "a database engine", 50, "Py", [], False, False)
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [leak, keep])
+    monkeypatch.setattr(main, "readme_first_line",
+                        lambda full_name, **k: "A Claude Code skill pack" if "untitled" in full_name else "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="trending", name="T", emoji="📈", query="q", count=5,
+                  agent_skill_cap=0, ai_cap=0)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["trending"] == [2]
+
+
+def test_run_watchlist_folds_into_snapshot(tmp_path, monkeypatch):
+    def fake_search(query, **k):
+        if "stars:>100" in query:
+            return [_repo(99, 800)]
+        return [_repo(1, 250)]
+    monkeypatch.setattr(main, "search_repos", lambda query, **k: fake_search(query))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="t", name="T", emoji="", query="topic:cli created:>x", count=1)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    snap = starsnap.load_snapshot(str(tmp_path), date(2026, 6, 8))
+    assert snap[1] == 250 and snap[99] == 800
+
+
+def test_run_fetches_second_page_when_ai_cap_set(tmp_path, monkeypatch):
+    pages = []
+    def fake_search(query, **k):
+        pages.append(k.get("page", 1))
+        return [_repo(k.get("page", 1), 10)]
+    monkeypatch.setattr(main, "search_repos", lambda query, **k: fake_search(query, **k))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="t", name="T", emoji="", query="q", count=5, ai_cap=2)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
+    assert 1 in pages and 2 in pages

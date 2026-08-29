@@ -68,7 +68,7 @@ def test_clean_drops_noise_and_stale_preserving_order():
     assert [r.full_name for r in out] == ["acme/good"]
 
 
-from bot.filters import is_agent_skill_pack, is_ai_repo, cap_agent_skills
+from bot.filters import is_agent_skill_pack, is_ai_repo, cap_agent_skills, cap_ai
 
 
 def test_is_agent_skill_pack_flags_collections():
@@ -129,6 +129,44 @@ def test_cap_agent_skills_zero_drops_all_ai():
     pack = _repo(full_name="b/x-skills", description="skills for claude code")
     clean_repo = _repo(full_name="c/pretext", description="text measurement and layout")
     assert cap_agent_skills([ai, pack, clean_repo], 0) == [clean_repo]
+
+
+def test_is_ai_repo_cursor_is_word_not_precursor():
+    assert is_ai_repo(_repo(full_name="lab/precursor",
+                            description="a precursor to the new compiler")) is False
+    assert is_ai_repo(_repo(full_name="acme/ide-bridge",
+                            description="a cursor agent for the editor")) is True
+
+
+def test_is_ai_repo_empty_metadata_readme_is_ai():
+    bare = _repo(full_name="acme/untitled", description="", topics=[])
+    assert is_ai_repo(bare) is False
+    assert is_ai_repo(bare, readme="A Claude Code skill for writing prompts") is True
+    # populated metadata: readme must not flip a real non-AI tool
+    real = _repo(full_name="acme/db", description="a database engine", topics=["database"])
+    assert is_ai_repo(real, readme="mentions an llm in passing") is False
+
+
+def test_cap_ai_none_is_passthrough():
+    repos = [_repo(full_name="a/gstack", description="Claude Code setup"),
+             _repo(full_name="b/db", description="database")]
+    assert cap_ai(repos, None) == repos
+
+
+def test_cap_ai_zero_drops_all_ai():
+    ai = _repo(full_name="a/gstack", description="Claude Code setup")
+    pack = _repo(full_name="b/x-skills", description="skills for claude code")
+    clean_repo = _repo(full_name="c/pretext", description="text measurement and layout")
+    assert cap_ai([ai, pack, clean_repo], 0) == [clean_repo]
+
+
+def test_cap_ai_n_keeps_non_ai_and_at_most_n_ai():
+    a1 = _repo(full_name="a/one", description="Claude Code setup")
+    a2 = _repo(full_name="b/two", topics=["ai-agents"], description="orchestration")
+    a3 = _repo(full_name="c/three", description="an llm gateway")
+    tool = _repo(full_name="d/db", description="a database engine")
+    out = cap_ai([a1, tool, a2, a3], 2)
+    assert out == [a1, tool, a2]   # two AI + the non-AI; a3 dropped
 
 
 def test_cap_agent_skills_n_limits_packs_keeps_tools():

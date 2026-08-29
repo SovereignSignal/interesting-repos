@@ -1,5 +1,8 @@
 from dataclasses import dataclass
-from bot.state import load_state, save_state, unsent, record_sent
+from bot.state import (
+    load_state, save_state, unsent, record_sent,
+    unposted, record_posted, POSTED_KEY,
+)
 
 
 @dataclass(frozen=True)
@@ -31,3 +34,21 @@ def test_record_sent_appends_without_duplicates():
 def test_record_sent_caps_fifo():
     state = record_sent({}, "t", list(range(10)), cap=3)
     assert state["t"] == [7, 8, 9]
+
+
+def test_unposted_drops_globally_posted_ids():
+    state = {POSTED_KEY: [1, 2]}
+    repos = [FakeRepo(1), FakeRepo(3), FakeRepo(4)]
+    assert [r.id for r in unposted(state, repos)] == [3, 4]
+
+
+def test_unposted_empty_state_keeps_all():
+    repos = [FakeRepo(9)]
+    assert unposted({}, repos) == repos
+
+
+def test_record_posted_appends_without_duplicates_and_caps():
+    state = record_posted({POSTED_KEY: [1]}, [1, 2, 3])
+    assert state[POSTED_KEY] == [1, 2, 3]
+    state = record_posted({}, list(range(10)), cap=3)
+    assert state[POSTED_KEY] == [7, 8, 9]

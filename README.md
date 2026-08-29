@@ -1,7 +1,7 @@
 # Interesting Repos → Telegram
 
 Digest of trending GitHub repos, by theme, posted to a Telegram group.
-Push-only: a script run by Railway cron three times daily. No server.
+Push-only: a script run by Railway cron four times daily. No server.
 
 ## How it works
 Discover (GitHub Search API "breakout" queries: recently-created, high-star; a theme
@@ -27,11 +27,13 @@ qualifier. `rank = "llm"` has an Ollama model score candidates against the theme
 `profile`; `min_score` (default 6) is the bar a repo must clear to be posted — raise
 it to be stricter, lower it if a theme runs too sparse. `rank = "stars"` just takes
 the top by stars (no AI). `count` caps the posts. `agent_skill_cap` limits agent-skill
-*packs* (0 = drop all AI repos, used by Trending; N = at most N packs). LLM curation
+*packs* (0 = drop all AI repos, used by Trending; N = at most N packs). `ai_cap` limits
+*all* AI repos (0 = drop all AI; N = at most N AI tools, packs or not). LLM curation
 needs `OLLAMA_*` set (below). `at` is a list of `"weekday HH"` slots (e.g.
 `at = ["mon 13", "thu 16"]`, UTC); a theme fires only when the run's UTC weekday and
 hour match one of its slots. The grid assigns one theme per slot, so each cron run (one
-UTC hour) posts a single theme; a run where no theme matches sends nothing.
+UTC hour) posts a single theme; a run where no theme matches sends nothing. Force a
+slot with `--now 2026-08-28T13:00:00Z` or a single theme with `--theme trending`.
 
 ## Where it posts
 `TELEGRAM_CHAT_ID` is the primary target (a channel or group). If `SLACK_BOT_TOKEN` +
@@ -70,14 +72,14 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env   # fill in values, then export them
 pytest -q              # run the tests
-python -m bot --dry-run   # print the digest instead of sending
+python -m bot --dry-run --theme trending   # print one theme; no Telegram creds needed
 ```
 
 ## Deploy on Railway
 1. New project from this repo.
 2. Set the env vars from `.env.example` in the service Variables.
 3. Add a **Volume** mounted at `/data` (holds `state.json` for dedup).
-4. The service runs on the cron in `railway.json` (`0 13,16,19 * * *` = three times
-   daily at 13:00, 16:00, 19:00 UTC). Each theme fires only in its `at` slots.
+4. The service runs on the cron in `railway.json` (`0 10,13,16,19 * * *` = four times
+   daily at 10:00, 13:00, 16:00, 19:00 UTC). Each theme fires only in its `at` slots.
 5. Tip: trigger one run and watch logs; or temporarily set the start command to
    `python -m bot --dry-run` for a safe first run.

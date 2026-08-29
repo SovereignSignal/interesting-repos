@@ -90,6 +90,29 @@ def test_load_themes_agent_skill_cap_zero_is_kept(tmp_path):
     assert load_themes(str(p))[0].agent_skill_cap == 0
 
 
+def test_load_themes_reads_ai_cap(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nai_cap=2\n')
+    assert load_themes(str(p))[0].ai_cap == 2
+
+
+def test_load_themes_ai_cap_absent_is_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].ai_cap is None
+
+
+def test_load_themes_ai_cap_zero_is_kept(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nai_cap=0\n')
+    assert load_themes(str(p))[0].ai_cap == 0
+
+
+def test_load_config_dry_run_does_not_require_telegram():
+    cfg = load_config(env={}, themes_path=str(SAMPLE), require_telegram=False)
+    assert cfg.telegram_bot_token == "dry-run" and cfg.telegram_chat_id == "0"
+
+
 def test_load_config_reads_send_delay_seconds():
     cfg = load_config(env=_env(SEND_DELAY_SECONDS="7"), themes_path=str(SAMPLE))
     assert cfg.send_delay_seconds == 7.0
@@ -231,7 +254,7 @@ def test_prod_themes_widen_starved_queries():
     assert "topic:react created:>{since:120d} stars:>20" in web
 
     data = _queries(themes["data"])
-    assert not any("stars:>50" in q for q in data)
+    assert not any("stars:>50" in q and "created:" in q for q in data)
     assert "topic:database created:>{since:120d} stars:>10" in data
     assert "topic:data-engineering created:>{since:120d} stars:>10" in data
     assert "topic:postgresql created:>{since:120d} stars:>10" in data
@@ -253,3 +276,27 @@ def test_prod_themes_widen_starved_queries():
     assert "topic:trading created:>{since:180d} stars:>20" in finance
 
     assert themes["trending"].query == "created:>{since:90d} stars:>1000"
+    assert themes["trending"].ai_cap == 0
+    assert themes["ai-agents"].ai_cap is None
+    assert themes["dev-tools"].ai_cap == 2
+    assert themes["movers"].ai_cap == 4
+    assert themes["crypto"].min_score == 7
+    assert all("stars:>10" in q for q in _queries(themes["crypto"]))
+
+    for key in ("finance", "systems", "data", "web", "science"):
+        assert any("pushed:>{since:30d}" in q for q in _queries(themes[key])), key
+
+    for key in ("robotics", "gamedev", "embedded", "privacy", "mobile"):
+        assert key in themes
+        assert themes[key].ai_cap == 2
+
+
+def test_prod_theme_slots_are_unique():
+    themes = load_themes(str(Path(__file__).resolve().parents[1] / "themes.toml"))
+    seen: dict = {}
+    for t in themes:
+        for slot in t.at or ():
+            assert slot not in seen, f"slot {slot} used by both {seen[slot]} and {t.key}"
+            seen[slot] = t.key
+    assert (6, 19) in seen and seen[(6, 19)] == "movers"   # Sun 19
+    assert (0, 10) in seen and seen[(0, 10)] == "robotics"  # Mon 10

@@ -4,8 +4,11 @@ import time
 from datetime import datetime, timezone, date
 
 from bot.config import expand_since
-from bot.github import search_repos, readme_first_line, readme_excerpt
-from bot.filters import clean, cap_agent_skills, star_velocity, age_days
+from bot.github import search_repos, readme_first_line, readme_parts
+from bot.filters import (
+    clean, cap_agent_skills, cap_ai, star_velocity, age_days,
+    is_ai_repo, is_empty_metadata,
+)
 from bot.ranker import rank
 from bot.formatter import build_messages
 from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
@@ -19,12 +22,16 @@ from bot.alerts import (
     TITLE_VIA_CURATOR, TITLE_VIA_NONE, resolve_curator, resolve_title_model,
     send_alert, llm_reachable,
 )
-from bot.state import load_state, save_state, unsent, record_sent
+from bot.state import load_state, save_state, unsent, record_sent, unposted, record_posted
 
 log = logging.getLogger("bot")
 
 # Most candidates to hand the LLM curator per theme (keeps the prompt tight/fast).
 CANDIDATE_LIMIT = 30
+# Cheap watch query folded into today's snapshot so Movers has mid-week memory
+# of repos that weren't in that hour's theme search. Disposable; failures warn.
+WATCH_QUERY = "created:>{since:120d} stars:>100"
+SEARCH_PER_PAGE = 100
 
 
 def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
@@ -65,8 +72,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
 
+    readme_cache: dict[str, tuple[str, str]] = {}
+
     def describe(r):
-        return readme_first_line(r.full_name, token=config.github_token)
+        first, _ = readme_cache.get(r.full_name) or readme_parts(
+            r.full_name, token=config.github_token)
+        return first
 
     def translate(text):
         return translate_to_english(text, host=config.ollama_host,
@@ -81,12 +92,17 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         try:
             queries = theme.query if isinstance(theme.query, tuple) else (theme.query,)
             repos, seen_ids = [], set()
+            # page 2 only when we will shape out AI — otherwise the extra 100
+            # are the same star-sorted head the curator already sees.
+            pages = (1, 2) if theme.ai_cap is not None else (1,)
             for q in queries:
-                for r in search_repos(expand_since(q, today), sort=theme.sort,
-                                      order=theme.order, token=config.github_token):
-                    if r.id not in seen_ids:
-                        seen_ids.add(r.id)
-                        repos.append(r)
+                for page in pages:
+                    for r in search_repos(expand_since(q, today), sort=theme.sort,
+                                          order=theme.order, token=config.github_token,
+                                          per_page=SEARCH_PER_PAGE, page=page):
+                        if r.id not in seen_ids:
+                            seen_ids.add(r.id)
+                            repos.append(r)
             if len(queries) > 1:
                 repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
@@ -101,8 +117,22 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             n_clean = len(repos)
             repos = unsent(state, theme.key, repos)
             repos = [r for r in repos if r.id not in claimed]
+            if not theme.delta_days:          # Movers may re-feature a known breakout
+                repos = unposted(state, repos)
             n_unsent = len(repos)
+            # cap=0 only: empty desc+topics + a README that is clearly AI → drop.
+            # Not applied under ai_cap=N (too aggressive on thin metadata).
+            if theme.agent_skill_cap == 0 or theme.ai_cap == 0:
+                kept = []
+                for r in repos:
+                    if is_empty_metadata(r) and not is_ai_repo(r):
+                        line = readme_first_line(r.full_name, token=config.github_token)
+                        if is_ai_repo(r, readme=line):
+                            continue
+                    kept.append(r)
+                repos = kept
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
+            repos = cap_ai(repos, theme.ai_cap)
             repos = repos[:CANDIDATE_LIMIT]
             n_cap = len(repos)
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
@@ -125,6 +155,15 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # alerted; a transient hiccup here is within Movers' tolerance window, so no alert.)
     if not dry_run:
         try:
+            for r in search_repos(expand_since(WATCH_QUERY, today), sort="stars",
+                                  order="desc", token=config.github_token,
+                                  per_page=SEARCH_PER_PAGE):
+                if not r.is_fork and not r.is_archived:
+                    today_snap[r.id] = r.stars
+        except Exception:
+            log.warning("movers watchlist search failed; snapshot proceeds without it",
+                        exc_info=True)
+        try:
             save_snapshot(config.state_dir, today, today_snap)
             retain(config.state_dir, today)
         except Exception:
@@ -146,7 +185,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             whys = [p.why for p in picked]
             summaries = None
             if config.ollama_host:
-                excerpts = [readme_excerpt(r.full_name, token=config.github_token) for r in repos_]
+                excerpts = []
+                for r in repos_:
+                    first, excerpt = readme_cache.get(r.full_name) or readme_parts(
+                        r.full_name, token=config.github_token)
+                    readme_cache[r.full_name] = (first, excerpt)
+                    excerpts.append(excerpt)
                 summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
                                            model=curator_model or "", api_key=config.ollama_api_key)
             titles = make_titles(repos_, host=config.ollama_host,
@@ -158,8 +202,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 deltas = [r.stars - base.get(r.id, r.stars) for r in repos_]
             # ★/day momentum for every theme — None when creation date is unknown (so the
             # velocity would be meaningless), which the formatter renders as no badge.
-            momenta = [star_velocity(r, today) if age_days(r.created_at, today) is not None
-                       else None for r in repos_]
+            # Hide ★/day for repos younger than 2 days (same-day 88k★/day theatre).
+            momenta = []
+            for r in repos_:
+                age = age_days(r.created_at, today)
+                momenta.append(star_velocity(r, today) if age is not None and age >= 2
+                               else None)
             messages = build_messages(theme, repos_, describe, translate, titles,
                                       summaries, deltas, momenta)
             if dry_run:
@@ -176,7 +224,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                     # the mirror never raises, so a broken token/channel is otherwise invisible
                     log.warning("theme %s: slack mirror failed (telegram delivered)", theme.key)
                 sent_any = True
-            state = record_sent(state, theme.key, [p.repo.id for p in picked])
+            ids = [p.repo.id for p in picked]
+            state = record_sent(state, theme.key, ids)
+            state = record_posted(state, ids)   # movers writes too; only *reads* are exempt
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception:
