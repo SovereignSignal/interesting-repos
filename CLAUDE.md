@@ -53,20 +53,21 @@ Trending sweeps the remainder):
   `gemma4:31b` (not `gemma4:31b-cloud`). The `-cloud` suffix is the local-daemon offload
   tag (`ollama run gemma4:31b-cloud`). Direct `/api/chat` on ollama.com uses catalog ids.
   `alerts.model_aliases` tries the configured name first, then the sibling, so a leftover
-  of either form self-heals. Colon-less cloud-native ids (`deepseek-v4-pro`) are not
-  rewritten. Closed PR #15 defaulting to `-cloud` would have pinged a name that is not
-  in the catalog.
+  of either form self-heals. Colon-less cloud-native ids are not rewritten. DeepSeek V4
+  Pro's catalog id is the dated tag `deepseek-v4-pro:0813` (untagged `deepseek-v4-pro`
+  is not in `/api/tags` and paged the 2026-09-14 heads-up). Closed PR #15 defaulting
+  to `-cloud` would have pinged a name that is not in the catalog.
 - **Curator model split + fallback chain:** `alerts.resolve_curator` walks
   `OLLAMA_CURATOR_MODEL` (a comma-list of candidates) at pre-flight, picks the first reachable,
   and appends `OLLAMA_MODEL` (plus aliases) as the final rung; the chosen model drives
   `rank()` + `make_summaries` while **titles and translation use `resolve_title_model`**
   (catalog id of `OLLAMA_MODEL`, else `-cloud` sibling, else the live curator). A retired/401
   primary self-heals to the next candidate (heads-up DM, run not degraded); only an all-down
-  chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro,gpt-oss:120b`
-  with `gemma4:31b` base (both predecessors `deepseek-v3.1:671b` and `gemma3:12b` were
-  retired 2026-07-15). (Ollama Cloud retires models with little notice — `qwen3-next:80b`
+  chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro:0813,gpt-oss:120b`
+  with `gemma4:31b` base (predecessors `deepseek-v4-pro` untagged, `deepseek-v3.1:671b`,
+  and `gemma3:12b`). (Ollama Cloud retires models with little notice — `qwen3-next:80b`
   was pulled 2026-06-16, which is why the fallback chain exists; on a degraded/heads-up
-  alert, probe the model for HTTP 410.)
+  alert, probe the model for HTTP 410 and `GET /api/tags`.)
 - **Never log at INFO around sends.** httpx logs request URLs at INFO and the Telegram token sits in
   the URL path — `__main__._configure_logging` raises httpx/httpcore to WARNING to keep it out of logs.
 - **`ALERT_CHAT_ID` is a DM and is alerts-only** — never digest content. Digests go to `TELEGRAM_CHAT_ID`

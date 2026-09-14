@@ -52,7 +52,7 @@ offload tag. Either form is accepted. Leave `OLLAMA_HOST` blank to disable.
 English/Latin text is never sent to the model, and any translation error falls
 back to the original text.
 `OLLAMA_CURATOR_MODEL` — stronger model(s) for curation scoring and summaries. Set a
-comma-separated list (e.g. `deepseek-v3.1:671b,gpt-oss:120b`) for an ordered fallback
+comma-separated list (e.g. `deepseek-v4-pro:0813,gpt-oss:120b`) for an ordered fallback
 chain: at startup the bot picks the first reachable one, and if all are down it falls
 back to `OLLAMA_MODEL`, then to stars-only. A retired or unauthorized primary self-heals
 to the next model (with a heads-up alert) instead of degrading the whole run. Blank ⇒
