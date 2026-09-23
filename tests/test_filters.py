@@ -103,8 +103,9 @@ def test_is_ai_repo_passes_non_ai():
 
 
 def test_is_ai_repo_owner_ai_token_and_description_false_positives():
-    """MiniMax-H3-shaped leak (empty metadata, AI only in the org name) plus the
-    guards: 'ai' inside description words, and 'openai' as a single token."""
+    """Owner 'ai' segments (deepseek-ai), glued owner tokens (sqliteai, genai),
+    model-family markers, and the guards against 'ai' inside ordinary words
+    (email, available). openai matches as a model name, not as a bare 'ai' split."""
     cases = json.loads((Path(__file__).parent / "data" / "ai_leaks.json").read_text())
     for case in cases:
         repo = _repo(full_name=case["full_name"], description=case["description"],
@@ -129,6 +130,15 @@ def test_cap_agent_skills_zero_drops_all_ai():
     pack = _repo(full_name="b/x-skills", description="skills for claude code")
     clean_repo = _repo(full_name="c/pretext", description="text measurement and layout")
     assert cap_agent_skills([ai, pack, clean_repo], 0) == [clean_repo]
+
+
+def test_is_ai_repo_llama_and_gemma_markers_fire_on_non_model_names():
+    """Known collision: a rare non-model repo named llama or gemma still counts
+    as AI. Keep the markers; do not skip them to avoid that collision."""
+    assert is_ai_repo(_repo(full_name="farm/llama",
+                            description="herd tracking for a mountain co-op")) is True
+    assert is_ai_repo(_repo(full_name="studio/gemma",
+                            description="a ceramics catalog")) is True
 
 
 def test_is_ai_repo_cursor_is_word_not_precursor():

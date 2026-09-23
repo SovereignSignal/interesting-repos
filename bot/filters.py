@@ -73,15 +73,23 @@ _PACK_NUM_RE = re.compile(r"\b\d{2,}\b.{0,30}\bskills?\b")
 _AI_TOPICS = {"ai", "ai-agent", "ai-agents", "agent", "agents", "agentic", "llm", "llms",
               "mcp", "mcp-server", "rag", "claude", "claude-code", "codex", "cursor",
               "gemini", "copilot", "openclaw", "anthropic", "ai-tools", "genai", "gpt",
-              "chatgpt", "ai-agent-tools"}
+              "chatgpt", "ai-agent-tools", "generative-ai", "machine-learning",
+              "deep-learning"}
 _AI_MARKERS = ("ai agent", "ai-agent", "agentic", "agent-native", "agent-first",
                "multi-agent", "autonomous agent", "claude code", "claude-code", "codex",
                "cursor", "gemini cli", "copilot", "mcp server", " mcp ", "openclaw",
                "anthropic", "ai coding", "ai-powered", "ai-native", "coding agent",
                "ai assistant", "ai memory", "ai workspace", "co-scientist", "llm",
-               "large language model")
-# Owner login only (MiniMax-AI, langchain-ai, deepseek-ai). Split on punctuation so
-# "openai" / "available" / "email" do not match. Never run this against descriptions.
+               "large language model",
+               # Model-family names. Word boundaries, never a bare "ai" or "agent".
+               "deepseek", "qwen", "ollama", "openai", "mistral", "llama", "grok", "gemma",
+               # Both separators: repo names use hyphens ("Embodied-AI", "world-model").
+               "embodied ai", "embodied-ai", "vision-language", "vision language",
+               "world model", "world-model", "inference engine", "inference-engine",
+               "agent harness", "agent-harness")
+# Owner login only. Punctuation-separated "ai" (deepseek-ai) or a glued token of
+# length >= 5 ending in "ai" (sqliteai, genai). Descriptions are not scanned, so
+# words such as "email" and "available" stay non-AI. There is no bare "ai" scan.
 _OWNER_SEP_RE = re.compile(r"[-_.]+")
 
 
@@ -98,10 +106,16 @@ def is_agent_skill_pack(repo) -> bool:
 
 def _owner_has_ai_token(repo) -> bool:
     """True when the owner login has a path segment exactly equal to 'ai'
-    (MiniMax-AI, langchain-ai, deepseek-ai, owner 'ai'). Deliberately does not
-    substring-match 'openai' or description words like 'available'/'email'."""
+    (MiniMax-AI, langchain-ai, deepseek-ai, owner 'ai'), or a glued token of
+    length >= 5 that ends in 'ai' (sqliteai, genai). A mid-word 'ai'
+    (email, available) does not match. Descriptions are not scanned."""
     owner = repo.full_name.split("/")[0].lower()
-    return any(tok == "ai" for tok in _OWNER_SEP_RE.split(owner) if tok)
+    for tok in _OWNER_SEP_RE.split(owner):
+        if not tok:
+            continue
+        if tok == "ai" or (len(tok) >= 5 and tok.endswith("ai")):
+            return True
+    return False
 
 
 def _has_ai_marker(blob: str) -> bool:
@@ -123,9 +137,10 @@ def is_empty_metadata(repo) -> bool:
 
 def is_ai_repo(repo, readme: str = "") -> bool:
     """Broad: any AI / agent / LLM repo (a skill pack, an AI topic, an AI marker in
-    the name/description, or an 'ai' token in the owner login). Used for cap=0
-    and `ai_cap`. Optional `readme` covers the empty-metadata leak (a bare name
-    plus a README that is clearly an agent/skill card)."""
+    the name/description, an 'ai' token in the owner login, or a glued owner token
+    of length >= 5 ending in 'ai'). Used for cap=0 and `ai_cap`. Optional `readme`
+    covers the empty-metadata leak (a bare name plus a README that is clearly an
+    agent/skill card)."""
     if is_agent_skill_pack(repo):
         return True
     if {t.lower() for t in repo.topics} & _AI_TOPICS:
