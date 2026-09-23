@@ -2,9 +2,10 @@
 
 Every run folds the repos it searches into today's snapshot
 (``STATE_DIR/starsnap/YYYY-MM-DD.json`` → ``{repo_id: stars}``). A delta theme
-compares today's counts to a baseline ~7 days old to source "what blew up this
-week." Disposable: delete the dir and Movers goes quiet for a week while it
-rebuilds; no other feature depends on it."""
+compares today's counts to the oldest star count per repo across snapshots
+from ``delta_days + tolerance`` ago through yesterday, so a mid-week watch
+hit is visible on Sunday. Disposable: delete the dir and Movers goes quiet
+until the window fills in; no other feature depends on it."""
 import json
 import os
 from datetime import date, timedelta
@@ -37,16 +38,38 @@ def save_snapshot(state_dir: str, day: date, mapping: dict) -> None:
     os.replace(tmp, path)
 
 
+class Baseline(dict):
+    """``{repo_id: stars}`` plus how many non-empty snapshot days were merged."""
+
+    def __init__(self, data=(), *, baseline_days: int = 0):
+        super().__init__(data)
+        self.baseline_days = baseline_days
+
+
 def find_baseline(state_dir: str, today: date, delta_days: int,
-                  tolerance: int = 3) -> dict:
-    """The nearest snapshot aged in ``[delta_days, delta_days+tolerance]`` days,
-    walking older. Returns ``{}`` when nothing in the window exists (cold start
-    or a cron gap wider than tolerance) — caller treats that as a quiet slot."""
-    for offset in range(delta_days, delta_days + tolerance + 1):
-        snap = load_snapshot(state_dir, today - timedelta(days=offset))
+                  tolerance: int = 3) -> Baseline:
+    """Oldest star count per repo from every snapshot in
+    ``[today - delta_days - tolerance, today - 1]``.
+
+    Today's file is not read. A repo keeps the count from the earliest day
+    it appears, so a Wednesday snapshot still feeds Sunday even when last
+    Sunday's file exists. Empty (``baseline_days == 0``) when the window has
+    no repos — caller treats that as a quiet slot.
+    """
+    start = today - timedelta(days=delta_days + tolerance)
+    end = today - timedelta(days=1)
+    merged: dict[int, int] = {}
+    days = 0
+    day = start
+    while day <= end:
+        snap = load_snapshot(state_dir, day)
         if snap:
-            return snap
-    return {}
+            days += 1
+            for repo_id, stars in snap.items():
+                if repo_id not in merged:  # earliest day wins
+                    merged[repo_id] = stars
+        day += timedelta(days=1)
+    return Baseline(merged, baseline_days=days)
 
 
 def retain(state_dir: str, today: date, keep_days: int = 14) -> None:

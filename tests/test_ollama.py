@@ -64,3 +64,16 @@ def test_chat_returns_empty_on_error():
     def handler(request):
         return httpx.Response(500)
     assert chat("p", host="h", model="m", client=_client(handler)) == ""
+
+
+def test_chat_result_names_empty_content_timeout_and_http_error():
+    from bot.ollama import chat_result
+    blank = _client(lambda r: httpx.Response(200, json={"message": {"content": ""}}))
+    assert chat_result("p", host="http://x", model="m", client=blank) == ("", "empty content")
+    failed = _client(lambda r: httpx.Response(500))
+    assert chat_result("p", host="http://x", model="m", client=failed) == ("", "request failed")
+
+    def timeout(request):
+        raise httpx.ReadTimeout("timed out")
+    text, reason = chat_result("p", host="http://x", model="m", client=_client(timeout))
+    assert (text, reason) == ("", "timeout")

@@ -3,7 +3,7 @@ from datetime import date
 
 import httpx
 
-from bot.ranker import rank, rank_by_stars, _rank_llm, Pick
+from bot.ranker import rank, rank_by_stars, _rank_llm, _parse_scores, Pick
 from bot.config import Theme
 
 
@@ -65,8 +65,9 @@ def test_rank_llm_keeps_only_scores_above_bar_ordered_by_score():
     repos = [R(1, 10), R(2, 20), R(3, 30)]
     reply = ('[{"i": 0, "score": 9, "why": "novel"}, {"i": 1, "score": 3, "why": "spam"}, '
              '{"i": 2, "score": 7, "why": "solid"}]')
-    out = _rank_llm(repos, _theme("llm", 5), "http://x", "m", "k",
-                    client=_content_client(reply))
+    out, reason = _rank_llm(repos, _theme("llm", 5), "http://x", "m", "k",
+                            client=_content_client(reply))
+    assert reason is None
     assert [(p.repo.id, p.why) for p in out] == [(1, "novel"), (3, "solid")]  # 3-scorer gated out
 
 
@@ -76,13 +77,15 @@ def test_rank_llm_all_below_bar_returns_empty_not_fallback():
     out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
                client=_content_client(reply))
     assert out == []   # quiet slot — deliberately NOT the stars fallback
+    assert out.fallback_reason is None
 
 
 def test_rank_llm_respects_theme_min_score():
     theme = Theme(key="t", name="T", emoji="", query="q", rank="llm", count=5, min_score=8)
     repos = [R(1, 10), R(2, 20)]
     reply = '[{"i": 0, "score": 9, "why": "great"}, {"i": 1, "score": 7, "why": "good"}]'
-    out = _rank_llm(repos, theme, "http://x", "m", "k", client=_content_client(reply))
+    out, reason = _rank_llm(repos, theme, "http://x", "m", "k", client=_content_client(reply))
+    assert reason is None
     assert [p.repo.id for p in out] == [1]
 
 
@@ -91,8 +94,9 @@ def test_rank_llm_tolerates_fences_prose_and_junk_entries():
     reply = ('Sure! Here:\n```json\n[{"i": 1, "score": 8, "why": "good"}, '
              '{"i": 99, "score": 9, "why": "oob"}, {"score": 9}, "junk", '
              '{"i": 1, "score": 8, "why": "dupe"}]\n```')
-    out = _rank_llm(repos, _theme("llm", 5), "http://x", "m", "k",
-                    client=_content_client(reply))
+    out, reason = _rank_llm(repos, _theme("llm", 5), "http://x", "m", "k",
+                            client=_content_client(reply))
+    assert reason is None
     assert [p.repo.id for p in out] == [2]   # out-of-range, malformed, and dupes dropped
 
 
@@ -173,3 +177,121 @@ def test_curation_prompt_has_no_cap_directive():
         assert "Do NOT select" not in p
         assert "NON-AI highlight" not in p
         assert "Prefer a DIVERSE set" not in p   # the old soft sentence is removed
+
+
+def _bot_warnings(caplog):
+    return [r.getMessage() for r in caplog.records if r.name == "bot" and r.levelname == "WARNING"]
+
+
+def test_rank_llm_unparseable_warns_and_signals_fallback(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
+               ollama_api_key="super-secret-key",
+               client=_content_client("I cannot rank these, sorry."))
+    assert [p.repo.id for p in out] == [2, 1]
+    assert out.fallback_reason == "unparseable"
+    warnings = _bot_warnings(caplog)
+    assert any("LLM scoring failed (unparseable)" in m for m in warnings)
+    assert all("super-secret-key" not in m for m in warnings)
+
+
+def test_rank_llm_empty_content_warns_and_signals_fallback(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    client = _client(lambda request: httpx.Response(200, json={"message": {"content": ""}}))
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
+               ollama_api_key="super-secret-key", client=client)
+    assert [p.repo.id for p in out] == [2, 1]
+    assert all(p.why == "" for p in out)
+    assert out.fallback_reason == "empty content"
+    assert any("LLM scoring failed (empty content)" in m for m in _bot_warnings(caplog))
+    assert "super-secret-key" not in caplog.text
+
+
+def test_rank_llm_timeout_warns_and_signals_fallback(caplog):
+    caplog.set_level("WARNING")
+    def handler(request):
+        raise httpx.ReadTimeout("timed out")
+    repos = [R(1, 10), R(2, 99)]
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
+               client=_client(handler))
+    assert out.fallback_reason == "timeout"
+    warnings = _bot_warnings(caplog)
+    assert any("LLM scoring failed (timeout)" in m for m in warnings)
+    assert all("timed out" not in m for m in warnings)
+
+
+def test_rank_llm_http_error_names_request_failed(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    client = _client(lambda request: httpx.Response(500))
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m", client=client)
+    assert out.fallback_reason == "request failed"
+    assert any("LLM scoring failed (request failed)" in m for m in _bot_warnings(caplog))
+
+
+def test_rank_llm_unexpected_error_logs_type_only(caplog, monkeypatch):
+    caplog.set_level("WARNING")
+    def boom(*a, **k):
+        raise RuntimeError("super-secret-key")
+    monkeypatch.setattr("bot.ranker.chat_result", boom)
+    repos = [R(1, 10), R(2, 99)]
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
+               ollama_api_key="super-secret-key")
+    assert [p.repo.id for p in out] == [2, 1]
+    assert out.fallback_reason == "RuntimeError"
+    warnings = _bot_warnings(caplog)
+    assert any("LLM scoring failed (RuntimeError)" in m for m in warnings)
+    assert all("super-secret-key" not in m for m in warnings)
+
+
+def test_rank_llm_quiet_slot_does_not_warn_or_fall_back(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    reply = '[{"i": 0, "score": 4, "why": "meh"}, {"i": 1, "score": 5, "why": "thin"}]'
+    out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m",
+               client=_content_client(reply))
+    assert out == []
+    assert out.fallback_reason is None
+    assert _bot_warnings(caplog) == []
+
+
+def test_rank_llm_without_host_is_not_a_scoring_failure(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    out = rank(repos, _theme("llm"), ollama_host="")
+    assert [p.repo.id for p in out] == [2, 1]
+    assert out.fallback_reason is None
+    assert _bot_warnings(caplog) == []
+
+
+def test_rank_llm_disables_thinking():
+    seen = {}
+    def handler(request):
+        import json as _json
+        seen["think"] = _json.loads(request.content).get("think", "OMITTED")
+        return httpx.Response(200, json={"message": {"content": '[{"i":0,"score":9,"why":"w"}]'}})
+    rank([R(1, 10)], _theme("llm", 1), ollama_host="http://x", ollama_model="m",
+         client=_client(handler))
+    assert seen["think"] is False
+
+
+def test_parse_scores_finds_score_array_after_earlier_brackets():
+    text = ('Note the [topics: rust, cli] line.\n'
+            '[{"i": 0, "score": 8, "why": "solid tool"}]')
+    assert _parse_scores(text) == [(0, 8.0, "solid tool")]
+
+
+def test_parse_scores_keeps_brackets_inside_why_strings():
+    text = '[{"i": 1, "score": 9, "why": "replaces [legacy] tools"}]'
+    assert _parse_scores(text) == [(1, 9.0, "replaces [legacy] tools")]
+
+
+def test_rank_llm_parses_scores_after_earlier_brackets():
+    repos = [R(1, 10, full_name="a/tool")]
+    reply = 'See [topics: rust] then [{"i": 0, "score": 9, "why": "novel"}]'
+    out = rank(repos, _theme("llm", 1), ollama_host="http://x", ollama_model="m",
+               client=_content_client(reply))
+    assert [(p.repo.id, p.why) for p in out] == [(1, "novel")]
+    assert out.fallback_reason is None

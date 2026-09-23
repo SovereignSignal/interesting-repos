@@ -31,7 +31,8 @@ def make_summaries(repos, excerpts=None, whys=None, host: str = "", model: str =
         "same order.\n\n"
         f"{listing}"
     )
-    text = chat(prompt, host=host, model=model, api_key=api_key, client=client)
+    text = chat(prompt, host=host, model=model, api_key=api_key, client=client,
+                think=False)
     match = _ARR_RE.search(text)
     if not match:
         return [None] * n

@@ -39,10 +39,31 @@ def test_find_baseline_falls_back_to_nearest_older_within_tolerance(tmp_path):
     assert out == {9: 50}
 
 
-def test_find_baseline_returns_empty_when_window_empty(tmp_path):
-    # nothing aged 7-10 days; a newer snapshot (within delta window) must be ignored
-    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 7), {9: 50})   # 1 day old
-    assert starsnap.find_baseline(str(tmp_path), date(2026, 6, 8), delta_days=7) == {}
+def test_find_baseline_ignores_today_and_snapshots_before_the_window(tmp_path):
+    today = date(2026, 6, 8)
+    # window is May 29 .. June 7 (delta 7 + default tolerance 3); today is skipped
+    starsnap.save_snapshot(str(tmp_path), today, {1: 10})
+    starsnap.save_snapshot(str(tmp_path), date(2026, 5, 28), {2: 20})
+    out = starsnap.find_baseline(str(tmp_path), today, delta_days=7)
+    assert out == {}
+    assert out.baseline_days == 0
+
+
+def test_find_baseline_merges_weekday_snapshots_keeping_oldest_count(tmp_path):
+    # Sunday June 14. Window is June 4 .. June 13. Last Sunday and Wednesday both count.
+    today = date(2026, 6, 14)
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 3), {9: 1})             # before window
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 7), {1: 500})           # previous Sunday
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 10), {1: 100, 2: 40})   # Wednesday
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 11), {})                 # empty: not a day
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 13), {4: 70})           # yesterday
+    starsnap.save_snapshot(str(tmp_path), today, {3: 999})                       # today skipped
+    out = starsnap.find_baseline(str(tmp_path), today, delta_days=7, tolerance=3)
+    assert out[1] == 500          # earliest count, not Wednesday's smaller 100
+    assert out[2] == 40           # Wednesday-only repo is visible
+    assert out[4] == 70           # yesterday is inside the window
+    assert 3 not in out and 9 not in out
+    assert out.baseline_days == 3
 
 
 def test_find_baseline_returns_empty_on_cold_start(tmp_path):
