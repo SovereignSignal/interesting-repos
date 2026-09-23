@@ -604,6 +604,8 @@ def test_run_delta_theme_cold_start_is_quiet(tmp_path, monkeypatch, caplog):
     theme = Theme(key="m", name="M", emoji="🚀", query="q", count=2, delta_days=7)
     failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
     assert failures == 0 and sent == []            # quiet slot, no failure, no alert
+    assert "baseline_days=0" in caplog.text
+    assert "dropped_no_baseline=2" in caplog.text
 
 
 def test_run_survives_snapshot_write_failure(tmp_path, monkeypatch, caplog):
@@ -726,3 +728,129 @@ def test_run_fetches_second_page_when_ai_cap_set(tmp_path, monkeypatch):
     theme = Theme(key="t", name="T", emoji="", query="q", count=5, ai_cap=2)
     main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
     assert 1 in pages and 2 in pages
+
+
+def _patch_llm_rank(monkeypatch, chat_reply, sent, alerts, curator=("m", [])):
+    """Real rank(); chat_result is stubbed so the run never touches the network."""
+    import bot.ranker as ranker
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10), _repo(2, 99)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
+    monkeypatch.setattr(main, "make_titles", lambda repos, **k: ["T"])
+    monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    monkeypatch.setattr(main, "send_alert",
+                        lambda token, chat, text, **k: alerts.append((chat, text)) or True)
+    monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: curator)
+    monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)
+    monkeypatch.setattr(ranker, "chat_result", lambda *a, **k: chat_reply)
+
+
+def _llm_cfg(tmp_path):
+    return Config("tok", "-100", "", str(tmp_path),
+                  [Theme(key="t", name="T", emoji="", query="q", count=2, rank="llm")],
+                  "http://x", alert_chat_id="dm-alerts", ollama_api_key="super-secret-key")
+
+
+def test_run_alerts_on_unparseable_scoring_not_ran_on(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    sent, alerts = [], []
+    _patch_llm_rank(monkeypatch, ("I cannot rank these, sorry.", None), sent, alerts,
+                    curator=("gemma4:31b", ["deepseek-v4-pro:0813"]))
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent   # stars fallback still posts
+    assert len(alerts) == 1
+    chat, text = alerts[0]
+    assert chat == "dm-alerts"          # ALERT_CHAT_ID, not the digest channel
+    assert "t (unparseable)" in text
+    assert "LLM scoring failed" in text
+    assert "ran on" not in text
+    assert "Ollama unreachable" not in text
+    assert "super-secret-key" not in text
+    assert all("LLM scoring failed" not in m for m in sent)
+    assert any("LLM scoring failed (unparseable)" in r.getMessage() for r in caplog.records)
+
+
+def test_run_alerts_on_empty_scoring_content(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    sent, alerts = [], []
+    _patch_llm_rank(monkeypatch, ("", "empty content"), sent, alerts,
+                    curator=("gemma4:31b", ["deepseek-v4-pro:0813"]))
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and len(alerts) == 1
+    assert alerts[0][0] == "dm-alerts"
+    assert "empty content" in alerts[0][1]
+    assert "ran on" not in alerts[0][1]
+    assert all("empty content" not in m for m in sent)
+    assert any("LLM scoring failed (empty content)" in r.getMessage() for r in caplog.records)
+
+
+def test_run_quiet_slot_does_not_fall_back_or_alert(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    sent, alerts = [], []
+    reply = '[{"i": 0, "score": 2, "why": "meh"}, {"i": 1, "score": 3, "why": "thin"}]'
+    _patch_llm_rank(monkeypatch, (reply, None), sent, alerts,
+                    curator=("deepseek-v4-pro:0813", []))
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent == [] and alerts == []
+    assert "quality bar" in caplog.text
+    assert "falling back to stars" not in caplog.text
+    assert "Ollama unreachable" not in caplog.text
+
+
+def test_run_heads_up_when_scores_parsed_on_fallback_curator(tmp_path, monkeypatch):
+    # Scores actually parsed, so the "ran on {model}" heads-up is still the right DM.
+    sent, alerts = [], []
+    reply = ('[{"i": 0, "score": 9, "why": "novel"}, {"i": 1, "score": 8, "why": "solid"}]')
+    _patch_llm_rank(monkeypatch, (reply, None), sent, alerts,
+                    curator=("gpt-oss:120b", ["deepseek-v3.1:671b"]))
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent
+    assert len(alerts) == 1
+    assert "ran on gpt-oss:120b" in alerts[0][1]
+    assert "LLM scoring failed" not in alerts[0][1]
+    assert "Ollama unreachable" not in alerts[0][1]
+
+
+def test_run_dry_run_does_not_alert_on_scoring_fallback(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    sent, alerts = [], []
+    _patch_llm_rank(monkeypatch, ("not json", None), sent, alerts)
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13), dry_run=True)
+    assert failures == 0 and alerts == [] and sent == []
+    assert any("LLM scoring failed (unparseable)" in r.getMessage() for r in caplog.records)
+
+
+def test_run_fully_degraded_does_not_stack_scoring_alert(tmp_path, monkeypatch):
+    sent, alerts = [], []
+    _patch_llm_rank(monkeypatch, ("", "timeout"), sent, alerts,
+                    curator=(None, ["gemma4:31b"]))
+    failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and len(alerts) == 1
+    assert "Ollama unreachable" in alerts[0][1]
+    assert "LLM scoring failed" not in alerts[0][1]
+
+
+def test_run_movers_baseline_reads_midweek_snapshot(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    # Sunday June 14. Repo 1 is on last Sunday (100) and Wednesday (200); oldest wins.
+    # Repo 2 exists only on Wednesday. Repo 3 has no snapshot in the window.
+    _seed_snapshot(tmp_path, date(2026, 6, 7), {1: 100})
+    _seed_snapshot(tmp_path, date(2026, 6, 10), {1: 200, 2: 50})
+    sent = []
+    from bot.ranker import Pick
+    monkeypatch.setattr(main, "search_repos",
+                        lambda *a, **k: [_repo(2, 500), _repo(1, 250), _repo(3, 9999)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="📈", query="q", count=5, delta_days=7)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 14, 19))
+    body = "\n".join(sent)
+    assert failures == 0
+    assert "+150★ this week" in body    # 250 - Sunday's 100, not Wednesday's 200
+    assert "+50★" not in body
+    assert "+450★ this week" in body    # Wednesday-only repo is eligible
+    assert "a/3" not in body
+    assert "baseline_days=2" in caplog.text
+    assert "dropped_no_baseline=1" in caplog.text

@@ -71,6 +71,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                      title_model, config.ollama_model, title_via)
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
+    # llm rank whose scores did not parse (empty content, timeout, unparseable).
+    # A quiet slot is not recorded here. Alerted after delivery, never on the digest.
+    scoring_fallbacks: list[tuple[str, str]] = []
 
     readme_cache: dict[str, tuple[str, str]] = {}
 
@@ -108,9 +111,16 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
             for r in repos:
                 today_snap[r.id] = r.stars      # feed the Movers store (every theme, every run)
+            dropped_no_baseline = 0
+            baseline_days = 0
             if theme.delta_days:                # source candidates by N-day star growth
+                # Baseline merges every snapshot from delta+tolerance ago through
+                # yesterday (oldest count per repo). Today's file is not read.
+                before_delta = len(repos)
                 baseline = find_baseline(config.state_dir, today, theme.delta_days)
                 repos = order_by_delta(repos, baseline)   # drops repos with no prior snapshot
+                dropped_no_baseline = before_delta - len(repos)
+                baseline_days = getattr(baseline, "baseline_days", 0)
                 baselines[theme.key] = baseline
             n_searched = len(repos)
             repos = clean(repos, today, theme.max_idle_days)
@@ -137,9 +147,18 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             n_cap = len(repos)
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
                           ollama_model=curator_model or "", ollama_api_key=config.ollama_api_key)
-            log.info("theme %s: searched=%d after_clean=%d after_unsent=%d after_cap=%d picked=%d",
-                     theme.key, n_searched, n_clean, n_unsent, n_cap, len(picked))
-            if repos and not picked:
+            fallback_reason = getattr(picked, "fallback_reason", None)
+            if fallback_reason:
+                scoring_fallbacks.append((theme.key, fallback_reason))
+            funnel = ("theme %s: searched=%d after_clean=%d after_unsent=%d "
+                      "after_cap=%d picked=%d")
+            funnel_args: list = [theme.key, n_searched, n_clean, n_unsent, n_cap, len(picked)]
+            if theme.delta_days:
+                funnel += " baseline_days=%d dropped_no_baseline=%d"
+                funnel_args.extend((baseline_days, dropped_no_baseline))
+            log.info(funnel, *funnel_args)
+            # Stars fallback is not "none above the bar" — that line is the quiet slot.
+            if repos and not picked and not fallback_reason:
                 log.info("theme %s: %d candidates, none above the quality bar",
                          theme.key, len(repos))
             results[theme.key] = picked
@@ -235,10 +254,21 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
 
     if not dry_run:
         if degraded:
+            # Whole chain down — this DM already says the run is stars-only.
+            # rank() still logs a WARNING and sets fallback_reason; a second
+            # scoring DM would double-page the same outage.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        "⚠️ interesting-repos: Ollama unreachable/unauthorized — this run is "
                        "degraded (stars-only picks, no AI titles/blurbs/translation). "
                        "Check OLLAMA_API_KEY in Railway.")
+        elif scoring_fallbacks:
+            # Reachable model, but scoring returned nothing usable. Do not send
+            # the "ran on {model}" heads-up — that claims curation happened.
+            # A quiet slot (scores parsed, none above min_score) is not in this list.
+            detail = ", ".join(f"{key} ({reason})" for key, reason in scoring_fallbacks)
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       "⚠️ interesting-repos: LLM scoring failed — "
+                       f"{detail}. Stars fallback; curator scores were not usable.")
         elif curator_skipped and curator_model:
             # primary curator(s) were down but a fallback worked — the run is fully curated,
             # just on a backup model; nudge Sov to fix the config (e.g. a retired model).

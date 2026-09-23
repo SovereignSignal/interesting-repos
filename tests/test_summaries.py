@@ -66,6 +66,16 @@ def test_make_summaries_threads_whys_into_prompt():
     assert "why" in captured["p"].lower()   # prompt asks for the why-it-matters angle
 
 
+def test_make_summaries_disables_thinking():
+    seen = {}
+    def handler(request):
+        import json as _json
+        seen["think"] = _json.loads(request.content).get("think", "OMITTED")
+        return httpx.Response(200, json={"message": {"content": '["Blurb."]'}})
+    make_summaries([R("a/x")], host="http://x", model="m", client=_client(handler))
+    assert seen["think"] is False
+
+
 def test_make_summaries_works_without_whys():
     out = make_summaries([R("a/x")], ["ex"], host="http://x", model="m",
                          client=_content_client('["Blurb."]'))
