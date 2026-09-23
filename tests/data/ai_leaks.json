@@ -45,7 +45,210 @@
     "full_name": "openai/sdk",
     "description": "details available via email",
     "topics": [],
+    "ai": true,
+    "why": "openai is a model-family marker and a glued owner token; email/available in the description are not the match"
+  },
+  {
+    "full_name": "community/DeepSeek-Harness",
+    "description": "Everything is a Plugin.",
+    "topics": [],
+    "ai": true,
+    "why": "deepseek in the repo name"
+  },
+  {
+    "full_name": "acme/plugins",
+    "description": "DeepSeek harness plugins for the editor",
+    "topics": [],
+    "ai": true,
+    "why": "deepseek in the description"
+  },
+  {
+    "full_name": "acme/grok-plugins",
+    "description": "editor extensions",
+    "topics": [],
+    "ai": true,
+    "why": "grok in the repo name"
+  },
+  {
+    "full_name": "acme/runner",
+    "description": "local models via Ollama",
+    "topics": [],
+    "ai": true,
+    "why": "ollama in the description"
+  },
+  {
+    "full_name": "lab/client",
+    "description": "an openai-compatible API client",
+    "topics": [],
+    "ai": true,
+    "why": "openai in the description, on a word boundary"
+  },
+  {
+    "full_name": "acme/qwen-serving",
+    "description": "batch runner",
+    "topics": [],
+    "ai": true,
+    "why": "qwen in the repo name"
+  },
+  {
+    "full_name": "acme/bridge",
+    "description": "a mistral weights server",
+    "topics": [],
+    "ai": true,
+    "why": "mistral in the description"
+  },
+  {
+    "full_name": "sqliteai/sqlite-vector",
+    "description": "a vector extension for sqlite",
+    "topics": [],
+    "ai": true,
+    "why": "glued owner token sqliteai ends in ai and is length >= 5"
+  },
+  {
+    "full_name": "genai/toolkit",
+    "description": "small utilities",
+    "topics": [],
+    "ai": true,
+    "why": "glued owner token genai (length 5) ends in ai"
+  },
+  {
+    "full_name": "lab/FluxVLA",
+    "description": "vision-language-action policies for tabletop robots",
+    "topics": [],
+    "ai": true,
+    "why": "VLA via the vision-language phrase"
+  },
+  {
+    "full_name": "lab/policy",
+    "description": "a vision language action policy",
+    "topics": [],
+    "ai": true,
+    "why": "vision language phrase with a space"
+  },
+  {
+    "full_name": "lab/Embodied-AI",
+    "description": "robot control stack",
+    "topics": [],
+    "ai": true,
+    "why": "embodied-ai in the repo name"
+  },
+  {
+    "full_name": "lab/stack",
+    "description": "embodied ai for mobile manipulators",
+    "topics": [],
+    "ai": true,
+    "why": "embodied ai phrase with a space"
+  },
+  {
+    "full_name": "lab/OpenWAM",
+    "description": "a world model for robot manipulation",
+    "topics": [],
+    "ai": true,
+    "why": "world model phrase"
+  },
+  {
+    "full_name": "lab/world-model",
+    "description": "dynamics",
+    "topics": [],
+    "ai": true,
+    "why": "world-model in the repo name"
+  },
+  {
+    "full_name": "acme/box",
+    "description": "an inference engine for local weights",
+    "topics": [],
+    "ai": true,
+    "why": "inference engine phrase"
+  },
+  {
+    "full_name": "acme/inference-engine",
+    "description": "local weights",
+    "topics": [],
+    "ai": true,
+    "why": "inference-engine in the repo name"
+  },
+  {
+    "full_name": "acme/loop",
+    "description": "an agent harness for tool calls",
+    "topics": [],
+    "ai": true,
+    "why": "agent harness phrase"
+  },
+  {
+    "full_name": "acme/agent-harness",
+    "description": "tool calls",
+    "topics": [],
+    "ai": true,
+    "why": "agent-harness in the repo name"
+  },
+  {
+    "full_name": "acme/lib",
+    "description": "training utilities",
+    "topics": ["machine-learning"],
+    "ai": true,
+    "why": "machine-learning topic"
+  },
+  {
+    "full_name": "acme/net",
+    "description": "training utilities",
+    "topics": ["deep-learning"],
+    "ai": true,
+    "why": "deep-learning topic"
+  },
+  {
+    "full_name": "acme/gen",
+    "description": "sampling utilities",
+    "topics": ["generative-ai"],
+    "ai": true,
+    "why": "generative-ai topic"
+  },
+  {
+    "full_name": "farm/llama",
+    "description": "herd tracking for a mountain co-op",
+    "topics": [],
+    "ai": true,
+    "why": "llama marker fires even on a non-model name; do not drop the marker"
+  },
+  {
+    "full_name": "studio/gemma",
+    "description": "a ceramics catalog",
+    "topics": [],
+    "ai": true,
+    "why": "gemma marker fires even on a non-model name; do not drop the marker"
+  },
+  {
+    "full_name": "acme/shop",
+    "description": "retail details available via email",
+    "topics": [],
     "ai": false,
-    "why": "'openai' is not an 'ai' path segment; do not substring-match"
+    "why": "email, available, and retail contain ai inside a longer word"
+  },
+  {
+    "full_name": "email/lists",
+    "description": "mailing lists",
+    "topics": [],
+    "ai": false,
+    "why": "owner token email contains ai mid-word and does not end in ai"
+  },
+  {
+    "full_name": "nuai/notes",
+    "description": "a notebook",
+    "topics": [],
+    "ai": false,
+    "why": "owner token ending in ai but shorter than 5 is not the glued-login rule"
+  },
+  {
+    "full_name": "acme/ext",
+    "description": "a sqliteai extension",
+    "topics": [],
+    "ai": false,
+    "why": "glued ai suffix is owner-only; descriptions are not scanned for a trailing ai"
+  },
+  {
+    "full_name": "acme/club",
+    "description": "a grokking-algorithms study group",
+    "topics": [],
+    "ai": false,
+    "why": "grok is a word-boundary marker and does not fire inside grokking"
   }
 ]
