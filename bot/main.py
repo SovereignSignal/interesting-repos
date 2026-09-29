@@ -4,7 +4,13 @@ import time
 from datetime import datetime, timezone, date
 
 from bot.config import expand_since
-from bot.github import search_repos, readme_first_line, readme_parts
+from bot.github import (
+    search_repos, readme_first_line, readme_parts,
+    github_rate_remaining, reset_github_rate_remaining,
+)
+from bot.source_health import (
+    THIN_POST_BELOW, report_source_health, short_reason, thin_post_line,
+)
 from bot.filters import (
     clean, cap_agent_skills, cap_ai, star_velocity, age_days,
     is_ai_repo, is_empty_metadata,
@@ -34,8 +40,19 @@ WATCH_QUERY = "created:>{since:120d} stars:>100"
 SEARCH_PER_PAGE = 100
 
 
+def _failure_reason(exc: BaseException, config) -> str:
+    return short_reason(
+        exc,
+        config.github_token,
+        config.telegram_bot_token,
+        config.ollama_api_key,
+        config.slack_bot_token,
+    )
+
+
 def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     now = now or datetime.now(timezone.utc)   # cron hours are UTC; never local time
+    reset_github_rate_remaining()
     today = now.date()
     state_path = os.path.join(config.state_dir, "state.json")
     state = load_state(state_path)
@@ -71,6 +88,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                      title_model, config.ollama_model, title_via)
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
+    # theme.key -> (status, items, error) for themes that ran this slot.
+    # Skipped slots are absent so they are not recorded as empty.
+    outcomes: dict = {}
     # llm rank whose scores did not parse (empty content, timeout, unparseable).
     # A quiet slot is not recorded here. Alerted after delivery, never on the digest.
     scoring_fallbacks: list[tuple[str, str]] = []
@@ -163,9 +183,11 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                          theme.key, len(repos))
             results[theme.key] = picked
             claimed.update(p.repo.id for p in picked)
-        except Exception:
+            outcomes[theme.key] = ("ok" if picked else "empty", len(picked), "")
+        except Exception as exc:
             failures += 1
             log.exception("theme %s failed during selection", theme.key)
+            outcomes[theme.key] = ("error", 0, _failure_reason(exc, config))
 
     # Persist today's snapshot once after selection (never in a dry-run, which mutates
     # nothing). The store is DISPOSABLE, so a write/retain failure must NEVER take down
@@ -243,14 +265,19 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                     # the mirror never raises, so a broken token/channel is otherwise invisible
                     log.warning("theme %s: slack mirror failed (telegram delivered)", theme.key)
                 sent_any = True
+            # Visibility only: a 1-2 repo digest still goes out unchanged.
+            if len(picked) < THIN_POST_BELOW:
+                log.warning("%s", thin_post_line(theme.key, len(picked)))
             ids = [p.repo.id for p in picked]
             state = record_sent(state, theme.key, ids)
             state = record_posted(state, ids)   # movers writes too; only *reads* are exempt
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
-        except Exception:
+        except Exception as exc:
             failures += 1
             log.exception("theme %s failed during delivery", theme.key)
+            outcomes[theme.key] = (
+                "error", len(picked) if picked else 0, _failure_reason(exc, config))
 
     if not dry_run:
         if degraded:
@@ -289,4 +316,24 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: {failures} theme(s) failed this run.")
+    # Observability only. Does not change picks, message text, or state.json.
+    ordered = []
+    for theme in config.themes:
+        if theme.key in outcomes:
+            status, items, error = outcomes[theme.key]
+            ordered.append((theme.key, status, items, error))
+    try:
+        report_source_health(
+            ordered,
+            state_dir=config.state_dir,
+            now=now,
+            dry_run=dry_run,
+            github_authenticated=bool(config.github_token),
+            alert_chat_id=config.alert_chat_id,
+            telegram_token=config.telegram_bot_token,
+            rate_remaining=github_rate_remaining(),
+            send_alert=send_alert,
+        )
+    except Exception:
+        log.warning("source_health report failed; delivery already finished", exc_info=True)
     return failures

@@ -50,6 +50,32 @@ def parse_repo(item: dict) -> Repo:
     )
 
 
+# Last Search X-RateLimit-Remaining observed in this process. Reset per run so a
+# previous invocation cannot leak a stale sample. None until a response carries
+# a numeric header — callers log it only then, and never log the token.
+_rate_remaining: int | None = None
+
+
+def reset_github_rate_remaining() -> None:
+    global _rate_remaining
+    _rate_remaining = None
+
+
+def github_rate_remaining() -> int | None:
+    return _rate_remaining
+
+
+def _note_rate_remaining(resp: httpx.Response) -> None:
+    global _rate_remaining
+    raw = resp.headers.get("X-RateLimit-Remaining")
+    if raw is None:
+        return
+    try:
+        _rate_remaining = int(raw)
+    except (TypeError, ValueError):
+        return
+
+
 def _retry_wait(resp: httpx.Response | None, attempt: int) -> float:
     """Seconds to wait: honor Retry-After when present, else 2**attempt."""
     raw = (resp.headers.get("Retry-After") if resp is not None else None) or ""
@@ -76,6 +102,7 @@ def search_repos(query: str, sort: str = "stars", order: str = "desc",
             try:
                 resp = client.get(f"{_API}/search/repositories", params=params,
                                   headers=headers)
+                _note_rate_remaining(resp)
                 if resp.status_code in (403, 429) or resp.status_code >= 500:
                     last_exc = httpx.HTTPStatusError(
                         f"GitHub search HTTP {resp.status_code}",

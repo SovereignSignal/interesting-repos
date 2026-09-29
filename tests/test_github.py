@@ -145,6 +145,44 @@ def test_readme_excerpt_returns_empty_on_error():
     assert readme_excerpt("a/b", client=_readme_client("nope", status=404)) == ""
 
 
+from bot.github import github_rate_remaining, reset_github_rate_remaining
+
+
+def test_search_repos_records_rate_limit_remaining_not_the_token(caplog):
+    reset_github_rate_remaining()
+    token = "ghp_SUPERSECRETTOKEN"
+    def handler(request):
+        assert request.headers.get("Authorization") == f"Bearer {token}"
+        return httpx.Response(
+            200, json={"items": []}, headers={"X-RateLimit-Remaining": "4321"})
+    caplog.set_level("DEBUG")
+    assert search_repos("q", token=token, client=_client(handler)) == []
+    assert github_rate_remaining() == 4321
+    assert token not in caplog.text
+
+
+def test_search_repos_ignores_missing_or_non_numeric_rate_limit():
+    reset_github_rate_remaining()
+    def handler(request):
+        return httpx.Response(
+            200, json={"items": []}, headers={"X-RateLimit-Remaining": "n/a"})
+    search_repos("q", client=_client(handler))
+    assert github_rate_remaining() is None
+
+
+def test_search_repos_keeps_prior_rate_limit_when_header_absent():
+    reset_github_rate_remaining()
+    def with_limit(request):
+        return httpx.Response(
+            200, json={"items": []}, headers={"X-RateLimit-Remaining": "0"})
+    search_repos("q", client=_client(with_limit))
+    assert github_rate_remaining() == 0
+    def no_limit(request):
+        return httpx.Response(200, json={"items": []})
+    search_repos("q", client=_client(no_limit))
+    assert github_rate_remaining() == 0
+
+
 def test_readme_parts_is_one_fetch_first_line_and_excerpt():
     body = "# Title\n\nThe real first sentence.\nSecond line.\n"
     first, excerpt = readme_parts("a/b", client=_readme_client(body))
