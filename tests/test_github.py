@@ -183,6 +183,92 @@ def test_search_repos_keeps_prior_rate_limit_when_header_absent():
     assert github_rate_remaining() == 0
 
 
+from bot.github import fetch_repos, github_rate_remaining as _remaining_after
+
+
+def _repo_json(repo_id, full_name, stars=10):
+    return {
+        "id": repo_id,
+        "full_name": full_name,
+        "html_url": f"https://github.com/{full_name}",
+        "description": "d",
+        "stargazers_count": stars,
+        "language": "Python",
+        "topics": [],
+        "fork": False,
+        "archived": False,
+        "created_at": "2025-10-01T00:00:00Z",
+    }
+
+
+def test_fetch_repos_hydrates_in_order_and_skips_404_without_touching_search_budget():
+    reset_github_rate_remaining()
+
+    def handler(request):
+        assert request.headers.get("Authorization") == "Bearer gh"
+        assert request.headers.get("Accept") == "application/vnd.github+json"
+        name = request.url.path.split("/repos/", 1)[1]
+        if name == "missing/repo":
+            return httpx.Response(404, json={"message": "Not Found"},
+                                  headers={"X-RateLimit-Remaining": "4000"})
+        return httpx.Response(200, json=_repo_json(99, "vectorize-io/hindsight", 20000),
+                              headers={"X-RateLimit-Remaining": "3999"})
+
+    repos = fetch_repos(["missing/repo", "vectorize-io/hindsight", "not a name"],
+                        token="gh", client=_client(handler))
+    assert repos[0] is None
+    assert repos[1] is not None and repos[1].id == 99 and repos[1].stars == 20000
+    assert repos[1].created_at == "2025-10-01T00:00:00Z"
+    assert repos[2] is None
+    # Core remaining must not overwrite the Search sample source_health logs.
+    assert _remaining_after() is None
+
+
+def test_fetch_repos_stops_when_core_budget_is_low():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(
+            200, json=_repo_json(1, "a/one"),
+            headers={"X-RateLimit-Remaining": "9"})
+
+    repos = fetch_repos(["a/one", "b/two"], client=_client(handler), min_remaining=10)
+    assert calls == ["/repos/a/one"]
+    assert repos[0] is not None and repos[1] is None
+
+
+def test_fetch_repos_aborts_batch_on_persistent_rate_limit():
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(
+            403, json={"message": "API rate limit exceeded"},
+            headers={"X-RateLimit-Remaining": "0"})
+
+    repos = fetch_repos(["a/one", "b/two"], client=_client(handler),
+                        retries=2, sleep=lambda _s: None)
+    assert repos == [None, None]
+    assert calls["n"] == 2   # retries on the first name, then the rest are not attempted
+
+
+def test_fetch_repos_skips_a_forbidden_repo_that_is_not_rate_limited():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith("/a/secret"):
+            return httpx.Response(403, json={"message": "Resource not accessible"},
+                                  headers={"X-RateLimit-Remaining": "4000"})
+        return httpx.Response(200, json=_repo_json(2, "b/ok"),
+                              headers={"X-RateLimit-Remaining": "3999"})
+
+    repos = fetch_repos(["a/secret", "b/ok"], client=_client(handler), retries=1)
+    assert repos[0] is None and repos[1] is not None and repos[1].id == 2
+    assert calls == ["/repos/a/secret", "/repos/b/ok"]
+
+
 def test_readme_parts_is_one_fetch_first_line_and_excerpt():
     body = "# Title\n\nThe real first sentence.\nSecond line.\n"
     first, excerpt = readme_parts("a/b", client=_readme_client(body))

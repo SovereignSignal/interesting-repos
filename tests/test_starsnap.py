@@ -96,3 +96,34 @@ def test_order_by_delta_ties_keep_input_order():
     baseline = {1: 100, 2: 200, 3: 300}                   # all delta 10 -> stable
     out = starsnap.order_by_delta(repos, baseline)
     assert [r.id for r in out] == [1, 2, 3]
+
+
+def test_order_by_delta_keeps_unbaselined_repo_with_a_measured_gain():
+    # Audit shape: an older repo has no snapshot, but GitHub Trending measured
+    # +14,507 this week. It outranks a young repo whose snapshot grew by 150.
+    repos = [R(1, 250), R(2, 60), R(3, 20000)]
+    baseline = {1: 100, 2: 50}                            # deltas 150 and 10
+    extras = {3: (14507, "weekly")}
+    out = starsnap.order_by_delta(repos, baseline, extras, span_days=7)
+    assert [r.id for r in out] == [3, 1, 2]
+
+
+def test_order_by_delta_compares_daily_and_weekly_gains_per_day():
+    repos = [R(1, 1), R(2, 1)]
+    extras = {1: (1400, "weekly"), 2: (500, "daily")}     # 200/day vs 500/day
+    out = starsnap.order_by_delta(repos, {}, extras)
+    assert [r.id for r in out] == [2, 1]
+
+
+def test_order_by_delta_snapshot_beats_a_page_gain_for_the_same_repo():
+    repos = [R(1, 110), R(2, 5000)]
+    baseline = {1: 100}                                   # +10, not the page's +9000
+    extras = {1: (9000, "daily"), 2: (100, "weekly")}
+    out = starsnap.order_by_delta(repos, baseline, extras, span_days=7)
+    assert [r.id for r in out] == [2, 1]
+
+
+def test_growth_pace_windows():
+    assert starsnap.growth_pace(500, "daily") == 500
+    assert starsnap.growth_pace(1400, "weekly") == 200
+    assert starsnap.growth_pace(3000, "monthly") == 100

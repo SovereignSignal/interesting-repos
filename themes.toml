@@ -12,7 +12,13 @@
 # profile: what "interesting" means for this theme; guides the LLM curator.
 # delta_days: set (e.g. 7) to source candidates by N-day star growth instead of
 #             leaving them in search-stars order — repos with no prior snapshot
-#             are dropped (the weekly Movers digest uses this). Optional.
+#             are dropped, unless github_trending measured a gain for them
+#             (the weekly Movers digest uses this). Optional.
+# github_trending: optional list of GitHub Trending windows ("daily", "weekly",
+#             "monthly"). Those pages are merged into the search pool with no
+#             created: age gate. On a delta theme the sort key is the STATE_DIR
+#             snapshot diff when a baseline exists, otherwise the page's
+#             "N stars today/this week". Only Movers opts in.
 #
 # LLM curation + non-English translation both use Ollama (set OLLAMA_* env vars).
 
@@ -163,7 +169,10 @@ profile = "Substantive scientific computing and simulation — numerical methods
 key   = "movers"
 name  = "This Week's Movers"
 emoji = "🚀"
+# Young-repo net. GitHub Trending below is what admits older repos (the
+# created: window used to hide hindsight, VoiceStudio, OpenShell, openrig).
 query = "created:>{since:120d} stars:>500"
+github_trending = ["daily", "weekly"]
 sort  = "stars"
 count = 7
 rank  = "llm"
@@ -172,7 +181,7 @@ agent_skill_cap = 2          # keep a real viral AI tool, cut clone/skill packs
 ai_cap = 4                   # breakouts may be AI; not a monopoly
 min_score = 7               # higher bar — we're featuring "what blew up"
 at = ["sun 19"]             # one firing/week
-profile = "Real breakouts with genuine momentum this week — repos whose star growth reflects substance (a novel tool, an inflection point, a real release), not manufactured hype. Aggressively discount anything whose velocity looks bought or coordinated, agent-skill clone packs, and forks riding a parent's fame. If the growth is real but the project is thin, it is not a mover."
+profile = "Real breakouts with genuine momentum this week — repos whose star growth reflects substance (a novel tool, an inflection point, a real release), not manufactured hype. Age is irrelevant: a year-old repo that actually blew up this week counts. Aggressively discount anything whose velocity looks bought or coordinated, agent-skill clone packs, and forks riding a parent's fame. If the growth is real but the project is thin, it is not a mover."
 
 # Fourth cron hour (10:00 UTC) — new domains. One-per-slot invariant holds.
 

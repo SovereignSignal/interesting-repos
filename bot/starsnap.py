@@ -1,11 +1,15 @@
 """Rolling star-snapshot store for the Movers (star-delta) digest.
 
-Every run folds the repos it searches into today's snapshot
-(``STATE_DIR/starsnap/YYYY-MM-DD.json`` → ``{repo_id: stars}``). A delta theme
-compares today's counts to the oldest star count per repo across snapshots
-from ``delta_days + tolerance`` ago through yesterday, so a mid-week watch
-hit is visible on Sunday. Disposable: delete the dir and Movers goes quiet
-until the window fills in; no other feature depends on it."""
+Every run folds the repos it searches (and any GitHub Trending repos it
+hydrated) into today's snapshot (``STATE_DIR/starsnap/YYYY-MM-DD.json`` →
+``{repo_id: stars}``). A delta theme compares today's counts to the oldest
+star count per repo across snapshots from ``delta_days + tolerance`` ago
+through yesterday, so a mid-week watch hit is visible on Sunday. A repo with
+no baseline is dropped unless the caller passes a measured gain (the Trending
+page's period count) — that is how an older repo is eligible the Sunday we
+first see it. Disposable: delete the dir and snapshot diffs go quiet until
+the window fills in; the Trending-page gain still covers that cold start.
+No other feature depends on the store."""
 import json
 import os
 from datetime import date, timedelta
@@ -90,15 +94,44 @@ def retain(state_dir: str, today: date, keep_days: int = 14) -> None:
             os.remove(os.path.join(folder, name))
 
 
-def order_by_delta(repos, baseline: dict) -> list:
-    """Repos with a baseline entry, sorted by ``stars_now - baseline`` desc.
-    Repos absent from the baseline are dropped (delta undefined = not eligible).
-    Stable on ties (preserves input order)."""
+# Days a measured gain covers, so a daily Trending count and a weekly snapshot
+# diff can share one sort. Snapshot diffs use the caller's span instead.
+_PERIOD_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
+
+
+def growth_pace(gain: int, period: str) -> float:
+    """Stars per day for a Trending-page gain. Unknown periods return the raw gain."""
+    days = _PERIOD_DAYS.get(period)
+    if not days:
+        return float(gain)
+    return gain / days
+
+
+def order_by_delta(repos, baseline: dict, extras: dict | None = None,
+                   span_days: int = 7) -> list:
+    """Sort by recent star growth, highest first. Stable on ties.
+
+    A repo in ``baseline`` ranks by the owned snapshot diff
+    (``stars_now - baseline``). That wins even when ``extras`` also has the
+    repo. Otherwise ``extras[id]`` is ``(gain, period)`` from GitHub Trending
+    (``"daily"`` / ``"weekly"`` / ``"monthly"``). Repos with neither are
+    dropped — a delta is undefined, so they are not eligible.
+
+    Without ``extras`` the sort key is the raw snapshot diff (Movers' original
+    order). With ``extras``, daily and weekly gains are compared per day, so
+    a repo that gained 500 stars today outranks one that gained 1,400 this week.
+    """
     scored = []
     for r in repos:
         prev = baseline.get(r.id)
-        if prev is None:
+        if prev is not None:
+            gain = r.stars - prev
+            key = gain / max(span_days, 1) if extras is not None else gain
+        elif extras and r.id in extras:
+            gain, period = extras[r.id]
+            key = growth_pace(gain, period)
+        else:
             continue
-        scored.append((r.stars - prev, r))
+        scored.append((key, r))
     scored.sort(key=lambda t: t[0], reverse=True)
     return [r for _, r in scored]

@@ -1,7 +1,11 @@
+import logging
+import re
 import time
 from dataclasses import dataclass
 
 import httpx
+
+log = logging.getLogger("bot.github")
 
 _API = "https://api.github.com"
 
@@ -65,15 +69,24 @@ def github_rate_remaining() -> int | None:
     return _rate_remaining
 
 
-def _note_rate_remaining(resp: httpx.Response) -> None:
-    global _rate_remaining
-    raw = resp.headers.get("X-RateLimit-Remaining")
+def _header_int(resp: httpx.Response, name: str) -> int | None:
+    raw = resp.headers.get(name)
     if raw is None:
-        return
+        return None
     try:
-        _rate_remaining = int(raw)
+        return int(raw)
     except (TypeError, ValueError):
-        return
+        return None
+
+
+def _note_rate_remaining(resp: httpx.Response) -> None:
+    """Record the Search bucket only. Callers of the core REST API must not
+    use this — core and search are separate quotas, and source_health reports
+    the Search sample."""
+    global _rate_remaining
+    value = _header_int(resp, "X-RateLimit-Remaining")
+    if value is not None:
+        _rate_remaining = value
 
 
 def _retry_wait(resp: httpx.Response | None, attempt: int) -> float:
@@ -120,6 +133,101 @@ def search_repos(query: str, sort: str = "stars", order: str = "desc",
                     continue
                 raise
         raise last_exc or RuntimeError("GitHub search failed")
+    finally:
+        if owns_client:
+            client.close()
+
+
+# owner/repo. Rejects anything that would change the request path.
+_REPO_NAME = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+# Leave this much core-API budget for the README fetches that follow hydration.
+_HYDRATE_MIN_REMAINING = 10
+
+
+def _rate_limited(resp: httpx.Response) -> bool:
+    if resp.status_code == 429:
+        return True
+    if resp.status_code != 403:
+        return False
+    if _header_int(resp, "X-RateLimit-Remaining") == 0:
+        return True
+    if resp.headers.get("Retry-After"):
+        return True
+    try:
+        body = resp.text.lower()
+    except Exception:
+        return False
+    return "rate limit" in body or "secondary rate" in body
+
+
+def _fetch_repo(client: httpx.Client, name: str, headers: dict, retries: int,
+                sleep) -> tuple[Repo | None, int | None, bool]:
+    """GET one repo. Returns ``(repo, remaining, abort_batch)``."""
+    for attempt in range(retries):
+        try:
+            resp = client.get(f"{_API}/repos/{name}", headers=headers)
+        except httpx.HTTPError:
+            if attempt < retries - 1:
+                sleep(float(2 ** attempt))
+                continue
+            return None, None, True
+        remaining = _header_int(resp, "X-RateLimit-Remaining")
+        if resp.status_code == 200:
+            try:
+                return parse_repo(resp.json()), remaining, False
+            except (KeyError, TypeError, ValueError):
+                log.warning("trending hydrate %s: unusable repo payload", name)
+                return None, remaining, False
+        if resp.status_code == 404:
+            return None, remaining, False
+        limited = _rate_limited(resp)
+        if limited or resp.status_code >= 500:
+            if attempt < retries - 1:
+                sleep(_retry_wait(resp, attempt))
+                continue
+            return None, remaining, True
+        return None, remaining, False
+    return None, None, True
+
+
+def fetch_repos(full_names: list[str], token: str = "",
+                client: httpx.Client | None = None, retries: int = 3,
+                sleep=time.sleep, min_remaining: int = _HYDRATE_MIN_REMAINING) -> list:
+    """Hydrate ``owner/name`` strings via ``GET /repos/{owner}/{name}``.
+
+    One result per input name; ``None`` when that repo was skipped or the
+    batch stopped early. Stops when the core quota falls below
+    ``min_remaining``, a rate limit persists, or the connection fails, so a
+    dead API cannot stall the digest on dozens of retries. Does not touch the
+    Search rate-limit sample (different bucket).
+    """
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "interesting-repos-bot"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    owns_client = client is None
+    client = client or httpx.Client(timeout=30)
+    out: list = []
+    remaining: int | None = None
+    try:
+        for name in full_names:
+            if remaining is not None and remaining < min_remaining:
+                log.warning(
+                    "trending hydrate stopped; core rate_limit_remaining=%s",
+                    remaining)
+                break
+            if not _REPO_NAME.fullmatch(name):
+                out.append(None)
+                continue
+            repo, remaining, abort = _fetch_repo(
+                client, name, headers, retries=retries, sleep=sleep)
+            out.append(repo)
+            if abort:
+                log.warning("trending hydrate aborted at %s", name)
+                break
+        if len(out) < len(full_names):
+            out.extend([None] * (len(full_names) - len(out)))
+        return out
     finally:
         if owns_client:
             client.close()

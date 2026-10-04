@@ -100,6 +100,20 @@ def test_format_delta_none_for_non_growth():
     assert _format_delta(-5) is None
 
 
+def test_format_delta_labels_the_trending_window():
+    assert _format_delta(627, "daily") == "+627★ today"
+    assert _format_delta(14507, "weekly") == "+14.5k★ this week"
+    assert _format_delta(2000, "monthly") == "+2.0k★ this month"
+
+
+def test_build_messages_daily_delta_says_today():
+    repos = [R(1, "a/b", "https://x/1", "d", 1500, "Rust")]
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       deltas=[627], delta_periods=["daily"])[0]
+    assert "+627★ today" in m
+    assert "this week" not in m
+
+
 def test_build_messages_deltas_none_is_identical_to_today():
     repos = [R(1, "a/b", "u", "d", 1500, "Rust")]
     plain = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"])[0]

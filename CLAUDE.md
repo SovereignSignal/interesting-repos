@@ -16,8 +16,8 @@ One cron run = one UTC hour. `run(config, now, dry_run)` does two phases:
 **Phase 1 — select** (themes in `catch_all`-last order, so specific themes claim repos before
 Trending sweeps the remainder):
 1. Skip the theme unless `(now.weekday(), now.hour)` is in `theme.at` (`at=None` ⇒ always run).
-2. `search_repos` per query — a theme's `query` may be a **list**; results merge, dedupe by id, re-sort by stars.
-3. Drop forks/archived → `clean()` (keyword-stuffed, awesome-lists, stale > `max_idle_days`) → `unsent()` (state) → drop already-`claimed` (cross-theme) → drop `_posted` (global cooling-off; Movers exempt) → empty-metadata README check when `cap=0` → `cap_agent_skills()` → `cap_ai()` → cap at `CANDIDATE_LIMIT` (30). Themes with `ai_cap` set fetch Search page 2 (`per_page=100`).
+2. `search_repos` per query — a theme's `query` may be a **list**; results merge, dedupe by id, re-sort by stars. A theme with `github_trending` (Movers: daily + weekly) also merges `github.com/trending` for those windows, hydrated with `GET /repos/{owner}/{repo}`. That list has no `created:` age gate.
+3. Drop forks/archived → on a `delta_days` theme, order by snapshot star growth (or, with no baseline, by the Trending page's period gain) → `clean()` (keyword-stuffed, awesome-lists, stale > `max_idle_days`) → `unsent()` (state) → drop already-`claimed` (cross-theme) → drop `_posted` (global cooling-off; Movers exempt) → empty-metadata README check when `cap=0` → `cap_agent_skills()` → `cap_ai()` → cap at `CANDIDATE_LIMIT` (30). Themes with `ai_cap` set fetch Search page 2 (`per_page=100`).
 4. `rank()` → `Pick`s; add their ids to `claimed`.
 
 **Phase 2 — deliver** (themes in config/display order):
@@ -86,8 +86,12 @@ Themes (`themes.toml`, parsed to frozen `Theme`): `key`, `name`, `emoji`, `query
 `sort`/`order`, `count` (cap), `rank` (`"llm"`|`"stars"`), `profile` (curator guidance),
 `catch_all`, `max_idle_days` (=60), `agent_skill_cap` (None ⇒ unfiltered, 0 ⇒ drop **all** AI repos,
 N ⇒ keep all non-packs + at most N skill *packs*), `ai_cap` (None ⇒ unchanged, 0 ⇒ drop all AI,
-N ⇒ keep all non-AI + at most N AI repos), `min_score` (=6), `at` (list of `"weekday HH"`
-UTC slots). `{since:Nd}` in a query expands to N days ago at run time.
+N ⇒ keep all non-AI + at most N AI repos), `min_score` (=6), `delta_days` (snapshot
+star-growth sourcing), `github_trending` (optional `"daily"` / `"weekly"` / `"monthly"`
+windows from github.com/trending; empty ⇒ search only), `at` (list of `"weekday HH"`
+UTC slots). `{since:Nd}` in a query expands to N days ago at run time. Movers is the
+only theme with `github_trending`; its search query is still the young-repo net
+(`created:>{since:120d}`), and the Trending pages are what let an older repo in.
 
 **Schedule grid** — cron `0 10,13,16,19 * * *` (UTC), one theme per slot (this one-per-slot invariant is
 maintainer-managed in `themes.toml` and asserted in `test_prod_theme_slots_are_unique`; if you add a
@@ -107,7 +111,8 @@ theme, keep slots unique):
 | `main.py` | The two-phase run loop; slot matching; dedup; alert wiring |
 | `__main__.py` | CLI (`--dry-run`, `--themes`), logging hardening, crash alert |
 | `config.py` | `Theme`/`Config` dataclasses, `load_themes`/`load_config`, `_parse_at`, `expand_since` |
-| `github.py` | `Repo`, `search_repos` (per_page=100, page, Retry-After), `readme_first_line`/`readme_excerpt`/`readme_parts` (raises on search error; readmes return "") |
+| `github.py` | `Repo`, `search_repos` (per_page=100, page, Retry-After), `fetch_repos` (core `GET /repos/{owner}/{repo}`, stops before the core budget is spent; does not overwrite the Search rate-limit sample), `readme_first_line`/`readme_excerpt`/`readme_parts` (raises on search error; readmes return "") |
+| `trending.py` | `parse_trending_html` / `collect_trending` (github.com/trending daily/weekly/monthly), `merge_trending`. Page period-gain until a snapshot baseline exists |
 | `ranker.py` | `rank` (3 outcomes), `_rank_llm` scoring prompt, `_parse_scores`, `rank_by_stars`, `Pick` |
 | `filters.py` | `clean`, `cap_agent_skills`, `cap_ai`, `is_agent_skill_pack` (narrow) vs `is_ai_repo` (broad), `star_velocity`/`VELOCITY_CEILING`=2500 |
 | `summaries.py` | `make_summaries` — "what + why" blurbs from desc+README+why; all-None fallback |
