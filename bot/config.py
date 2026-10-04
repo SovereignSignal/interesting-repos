@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 _SINCE_RE = re.compile(r"\{since:(\d+)d\}")
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_TRENDING_PERIODS = {"daily", "weekly", "monthly"}
 
 # Default host is Ollama Cloud. Direct /api/chat catalog id is `gemma4:31b`
 # (confirmed via GET https://ollama.com/api/tags). `gemma4:31b-cloud` is the
@@ -32,6 +33,30 @@ def _parse_at(raw: list) -> tuple:
     return tuple(slots)
 
 
+def _parse_trending(raw) -> tuple:
+    """``github_trending`` windows. Unknown values fail at load, not mid-run.
+    A string is accepted as a single window. Blanks and duplicates are dropped."""
+    if raw is None or raw == "":
+        return ()
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise SystemExit(
+            f"themes.toml: github_trending must be a list of windows, got {raw!r}")
+    periods = []
+    for entry in raw:
+        period = str(entry).strip().lower()
+        if not period:
+            continue
+        if period not in _TRENDING_PERIODS:
+            raise SystemExit(
+                f"themes.toml: invalid github_trending window {entry!r} "
+                "(want daily, weekly, or monthly)")
+        if period not in periods:
+            periods.append(period)
+    return tuple(periods)
+
+
 def expand_since(query: str, today: date) -> str:
     def repl(m: "re.Match[str]") -> str:
         days = int(m.group(1))
@@ -56,6 +81,10 @@ class Theme:
     ai_cap: int | None = None       # None unchanged; 0 drop all AI; N at most N AI repos
     min_score: int = 6    # curator score a repo must reach to be posted (0-10)
     delta_days: int | None = None   # set => source candidates by N-day star growth (Movers)
+    # GitHub Trending windows merged into the pool ("daily"/"weekly"/"monthly").
+    # Empty ⇒ search only. These repos are any age; the created: qualifier does
+    # not apply to them.
+    github_trending: tuple = ()
     at: tuple | None = None
 
 
@@ -84,6 +113,7 @@ def load_themes(path: str) -> list[Theme]:
             ai_cap=t.get("ai_cap"),
             min_score=t.get("min_score", 6),
             delta_days=t.get("delta_days"),
+            github_trending=_parse_trending(t.get("github_trending")),
             at=at,
         ))
     return themes

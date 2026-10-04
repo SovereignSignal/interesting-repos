@@ -854,3 +854,182 @@ def test_run_movers_baseline_reads_midweek_snapshot(tmp_path, monkeypatch, caplo
     assert "a/3" not in body
     assert "baseline_days=2" in caplog.text
     assert "dropped_no_baseline=1" in caplog.text
+
+
+def _trending_theme(**kwargs):
+    fields = dict(key="movers", name="Movers", emoji="🚀", query="q", count=5,
+                  delta_days=7, github_trending=("daily", "weekly"))
+    fields.update(kwargs)
+    return Theme(**fields)
+
+
+def _install_trending(monkeypatch, search_repos, hits, hydrated, fetched):
+    from bot.ranker import Pick
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: list(search_repos))
+    monkeypatch.setattr(main, "collect_trending", lambda periods, **k: list(hits))
+    def _fetch(names, **k):
+        fetched.extend(names)
+        return list(hydrated)
+    monkeypatch.setattr(main, "fetch_repos", _fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+
+
+def test_run_movers_ranks_any_age_trending_repo_by_page_gain(tmp_path, monkeypatch):
+    """The 2026-10-04 misses (hindsight +14.5k, created 2025-10) never entered
+    Search because of created:>120d. The Trending page gain admits them with
+    no snapshot baseline, ahead of a young repo's smaller snapshot delta."""
+    from bot.trending import TrendingHit
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})
+    young = _repo(1, 250)   # snapshot delta +150
+    old = Repo(99, "vectorize-io/hindsight", "https://github.com/vectorize-io/hindsight",
+               "memory that learns", 20000, "Python", [], False, False,
+               created_at="2025-10-01T00:00:00Z", pushed_at="2026-06-07T00:00:00Z")
+    daily = Repo(100, "thedotmack/claude-mem", "https://github.com/thedotmack/claude-mem",
+                 "session notes", 9000, "TypeScript", [], False, False,
+                 created_at="2025-01-01T00:00:00Z", pushed_at="2026-06-07T00:00:00Z")
+    hits = [
+        TrendingHit("vectorize-io/hindsight", 14507, "weekly", 20000),
+        TrendingHit("thedotmack/claude-mem", 627, "daily", 9000),
+    ]
+    sent, fetched, seen = [], [], {}
+
+    def fake_rank(repos, theme, **k):
+        seen["order"] = [r.id for r in repos]
+        from bot.ranker import Pick
+        return [Pick(r) for r in repos]
+
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [young])
+    monkeypatch.setattr(main, "collect_trending", lambda periods, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos",
+                        lambda names, **k: fetched.extend(names) or [old, daily])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", fake_rank)
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    alerts = []
+    monkeypatch.setattr(main, "send_alert",
+                        lambda *a, **k: alerts.append(a[2]) or True)
+    theme = _trending_theme()
+    cfg = Config("tok", "-100", "", str(tmp_path), [theme], "", alert_chat_id="dm")
+    failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and alerts == []
+    assert fetched == ["vectorize-io/hindsight", "thedotmack/claude-mem"]
+    assert seen["order"][0] == 99          # +14.5k/week beats +150 snapshot and +627 today
+    assert 100 in seen["order"] and 1 in seen["order"]
+    body = "\n".join(sent)
+    assert "+14.5k★ this week" in body
+    assert "+627★ today" in body
+    assert "+150★ this week" in body
+    snap = starsnap.load_snapshot(str(tmp_path), date(2026, 6, 8))
+    assert snap[99] == 20000 and snap[100] == 9000 and snap[1] == 250
+
+
+def test_run_trending_does_not_rehydrate_a_repo_search_already_returned(tmp_path, monkeypatch):
+    from bot.trending import TrendingHit
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})
+    already = Repo(1, "acme/already", "https://github.com/acme/already",
+                   "desc", 250, "Py", [], False, False)
+    fetched = []
+    sent = []
+    _install_trending(
+        monkeypatch, [already],
+        [TrendingHit("acme/already", 4000, "weekly", 250)],
+        [], fetched)
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    main.run(_cfg(tmp_path, [_trending_theme(count=1)]), now=datetime(2026, 6, 8, 13))
+    assert fetched == []
+    # Page gain is not used once a snapshot baseline exists (+150, not +4000).
+    assert any("+150★ this week" in m for m in sent)
+    assert "+4.0k" not in "\n".join(sent)
+
+
+def test_run_movers_still_drops_a_trending_repo_it_already_sent(tmp_path, monkeypatch):
+    from bot.trending import TrendingHit
+    old = Repo(99, "vectorize-io/hindsight", "u", "memory", 20000, "Py", [], False, False)
+    (tmp_path / "state.json").write_text('{"movers": [99]}')
+    sent = []
+    _install_trending(monkeypatch, [], [TrendingHit("vectorize-io/hindsight", 14507, "weekly")],
+                      [old], [])
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    failures = main.run(_cfg(tmp_path, [_trending_theme()]), now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent == []
+
+
+def test_run_movers_can_refeature_a_trending_repo_another_theme_posted(tmp_path, monkeypatch):
+    from bot.trending import TrendingHit
+    old = Repo(99, "mvschwarz/openrig", "https://github.com/mvschwarz/openrig",
+               "rig", 8000, "Go", [], False, False)
+    (tmp_path / "state.json").write_text('{"_posted": [99], "web": [99]}')
+    sent = []
+    _install_trending(monkeypatch, [], [TrendingHit("mvschwarz/openrig", 4200, "weekly")],
+                      [old], [])
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    main.run(_cfg(tmp_path, [_trending_theme(count=1)]), now=datetime(2026, 6, 8, 13))
+    assert sent and "openrig" in sent[0]
+    assert "+4.2k★ this week" in sent[0]
+
+
+def test_run_trending_still_obeys_ai_cap(tmp_path, monkeypatch):
+    """Any-age Trending hits still go through the deterministic caps. The age
+    window was the bug; ai_cap is not bypassed."""
+    from bot.trending import TrendingHit
+    fast = Repo(1, "a/fast", "u", "a claude coding agent", 20000, "Py", [], False, False)
+    slow = Repo(2, "b/slow", "u", "an llm gateway", 9000, "Py", [], False, False)
+    tool = Repo(3, "c/db", "u", "a database engine", 1000, "Go", [], False, False)
+    hits = [
+        TrendingHit("a/fast", 16000, "weekly"),
+        TrendingHit("b/slow", 8000, "weekly"),
+        TrendingHit("c/db", 500, "weekly"),
+    ]
+    sent = []
+    _install_trending(monkeypatch, [], hits, [fast, slow, tool], [])
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = _trending_theme(count=5, ai_cap=1)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    import json
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert sorted(saved["movers"]) == [1, 3]   # fastest AI + the non-AI; slow AI dropped
+
+
+def test_run_trending_outage_keeps_the_search_pool_and_alerts(tmp_path, monkeypatch, caplog):
+    caplog.set_level("WARNING")
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})
+    sent, alerts = [], []
+
+    def boom(*a, **k):
+        raise RuntimeError("trending down")
+
+    from bot.ranker import Pick
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 250)])
+    monkeypatch.setattr(main, "collect_trending", boom)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    monkeypatch.setattr(main, "send_alert",
+                        lambda *a, **k: alerts.append(a[2]) or True)
+    theme = _trending_theme(count=1)
+    cfg = Config("tok", "-100", "", str(tmp_path), [theme], "", alert_chat_id="dm")
+    failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
+    assert failures == 0 and sent           # young snapshot repo still posts
+    assert any("search-pool only" in text for text in alerts)
+    assert "github trending" in caplog.text.lower()
+
+
+def test_run_trending_outage_does_not_alert_on_dry_run(tmp_path, monkeypatch):
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {1: 100})
+    alerts = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 250)])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: [])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_alert",
+                        lambda *a, **k: alerts.append(a[2]) or True)
+    cfg = Config("tok", "-100", "", str(tmp_path), [_trending_theme()], "",
+                 alert_chat_id="dm")
+    failures = main.run(cfg, now=datetime(2026, 6, 8, 13), dry_run=True)
+    assert failures == 0 and alerts == []

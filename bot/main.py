@@ -5,9 +5,10 @@ from datetime import datetime, timezone, date
 
 from bot.config import expand_since
 from bot.github import (
-    search_repos, readme_first_line, readme_parts,
+    search_repos, fetch_repos, readme_first_line, readme_parts,
     github_rate_remaining, reset_github_rate_remaining,
 )
+from bot.trending import collect_trending, merge_trending
 from bot.source_health import (
     THIN_POST_BELOW, report_source_health, short_reason, thin_post_line,
 )
@@ -40,6 +41,36 @@ WATCH_QUERY = "created:>{since:120d} stars:>100"
 SEARCH_PER_PAGE = 100
 
 
+def _merge_github_trending(theme, repos: list, token: str):
+    """Append GitHub Trending repos the search pool did not already return.
+
+    Returns ``(repos, gains, added, hits)``. ``gains`` maps repo id to
+    ``(stars_gained, period)`` for every resolved hit, including repos search
+    already had. Never raises — a scrape or hydrate failure leaves the search
+    pool in place.
+    """
+    if not theme.github_trending:
+        return repos, {}, 0, 0
+    try:
+        hits = collect_trending(theme.github_trending)
+    except Exception:
+        log.warning("theme %s: github trending fetch failed; search pool only",
+                    theme.key, exc_info=True)
+        return repos, {}, 0, 0
+    known = {r.full_name.lower() for r in repos}
+    missing = [h.full_name for h in hits if h.full_name.lower() not in known]
+    hydrated: list = []
+    if missing:
+        try:
+            hydrated = fetch_repos(missing, token=token)
+        except Exception:
+            log.warning("theme %s: trending hydrate failed; search pool only",
+                        theme.key, exc_info=True)
+            hydrated = [None] * len(missing)
+    merged, gains = merge_trending(repos, hits, missing, hydrated)
+    return merged, gains, len(merged) - len(repos), len(hits)
+
+
 def _failure_reason(exc: BaseException, config) -> str:
     return short_reason(
         exc,
@@ -60,6 +91,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # A delta theme (theme.delta_days set) sources candidates by week-over-week growth.
     today_snap = load_snapshot(config.state_dir, today)
     baselines: dict = {}     # theme.key -> baseline {repo_id: stars} (delta themes only)
+    # theme.key -> {repo_id: (gained, period)} from GitHub Trending, for repos
+    # with no snapshot baseline yet. Display and velocity both read this.
+    gained: dict = {}
+    trending_empty: list[str] = []
     failures = 0
     # pre-flight: resolve the curator by walking OLLAMA_CURATOR_MODEL's candidates (first
     # reachable wins), falling back to the base model as the final rung. A retired/401
@@ -128,6 +163,12 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                             repos.append(r)
             if len(queries) > 1:
                 repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
+            repos, theme_gains, trending_added, trending_hits = _merge_github_trending(
+                theme, repos, config.github_token)
+            gained[theme.key] = theme_gains
+            if theme.github_trending and not theme_gains:
+                trending_empty.append(theme.key)
+                log.warning("theme %s: github trending added no repos", theme.key)
             repos = [r for r in repos if not r.is_fork and not r.is_archived]
             for r in repos:
                 today_snap[r.id] = r.stars      # feed the Movers store (every theme, every run)
@@ -138,10 +179,20 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 # yesterday (oldest count per repo). Today's file is not read.
                 before_delta = len(repos)
                 baseline = find_baseline(config.state_dir, today, theme.delta_days)
-                repos = order_by_delta(repos, baseline)   # drops repos with no prior snapshot
+                # Snapshot diff when we have one; otherwise the Trending page's
+                # period gain so an older repo is eligible the day we first see it.
+                extras = theme_gains if theme.github_trending else None
+                repos = order_by_delta(
+                    repos, baseline, extras, span_days=theme.delta_days)
                 dropped_no_baseline = before_delta - len(repos)
                 baseline_days = getattr(baseline, "baseline_days", 0)
                 baselines[theme.key] = baseline
+            elif theme_gains:
+                # No snapshot reorder. Put Trending hits first so the candidate
+                # cap cannot bury an any-age repo under the search head.
+                front = [r for r in repos if r.id in theme_gains]
+                back = [r for r in repos if r.id not in theme_gains]
+                repos = front + back
             n_searched = len(repos)
             repos = clean(repos, today, theme.max_idle_days)
             n_clean = len(repos)
@@ -176,6 +227,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             if theme.delta_days:
                 funnel += " baseline_days=%d dropped_no_baseline=%d"
                 funnel_args.extend((baseline_days, dropped_no_baseline))
+            if theme.github_trending:
+                funnel += " trending_hits=%d trending_added=%d"
+                funnel_args.extend((trending_hits, trending_added))
             log.info(funnel, *funnel_args)
             # Stars fallback is not "none above the bar" — that line is the quiet slot.
             if repos and not picked and not fallback_reason:
@@ -238,9 +292,23 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                                  model=title_model or config.ollama_model,
                                  api_key=config.ollama_api_key)
             deltas = None
+            delta_periods = None
             if theme.delta_days:    # annotate the meta line with '+N★ this week'
                 base = baselines.get(theme.key, {})
-                deltas = [r.stars - base.get(r.id, r.stars) for r in repos_]
+                extra = gained.get(theme.key, {})
+                deltas = []
+                delta_periods = []
+                for r in repos_:
+                    if r.id in base:
+                        deltas.append(r.stars - base[r.id])
+                        delta_periods.append("weekly")
+                    elif r.id in extra:
+                        gain, period = extra[r.id]
+                        deltas.append(gain)
+                        delta_periods.append(period)
+                    else:
+                        deltas.append(None)
+                        delta_periods.append("weekly")
             # ★/day momentum for every theme — None when creation date is unknown (so the
             # velocity would be meaningless), which the formatter renders as no badge.
             # Hide ★/day for repos younger than 2 days (same-day 88k★/day theatre).
@@ -250,7 +318,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 momenta.append(star_velocity(r, today) if age is not None and age >= 2
                                else None)
             messages = build_messages(theme, repos_, describe, translate, titles,
-                                      summaries, deltas, momenta)
+                                      summaries, deltas, momenta, delta_periods)
             if dry_run:
                 for m in messages:
                     print(m)
@@ -316,6 +384,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: {failures} theme(s) failed this run.")
+        if trending_empty:
+            # The search pool still ran. This DM is the age-free source being
+            # down (page markup or hydrate), which otherwise looks like a
+            # normal thin Movers post.
+            send_alert(config.telegram_bot_token, config.alert_chat_id,
+                       "⚠️ interesting-repos: GitHub Trending added no repos for "
+                       f"{', '.join(trending_empty)}; search-pool only this run.")
     # Observability only. Does not change picks, message text, or state.json.
     ordered = []
     for theme in config.themes:

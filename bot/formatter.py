@@ -3,15 +3,19 @@ from html import escape
 TELEGRAM_LIMIT = 4096
 
 
-def _format_delta(n: int) -> str | None:
+_DELTA_LABEL = {"daily": "today", "weekly": "this week", "monthly": "this month"}
+
+
+def _format_delta(n: int, period: str = "weekly") -> str | None:
     """A compact '+N★ this week' growth annotation, or None when there's nothing
     to show (<=0). Compact form (1.2k) mirrors the 'fastest growing repos this
-    week' post format Movers is based on."""
+    week' post format Movers is based on. ``period="daily"`` says "today"."""
     if n <= 0:
         return None
+    label = _DELTA_LABEL.get(period, "this week")
     if n >= 1000:
-        return f"+{n / 1000:.1f}k★ this week"
-    return f"+{n:,}★ this week"
+        return f"+{n / 1000:.1f}k★ {label}"
+    return f"+{n:,}★ {label}"
 
 
 def _format_momentum(v) -> str | None:
@@ -22,14 +26,15 @@ def _format_momentum(v) -> str | None:
     return f"{round(v):,}★/day"
 
 
-def _entry(repo, title, summary, describe, translate, delta=None, momentum=None) -> str:
+def _entry(repo, title, summary, describe, translate, delta=None, momentum=None,
+           delta_period: str = "weekly") -> str:
     desc = summary or translate(repo.description or describe(repo) or "")
     heading = f'<a href="{repo.html_url}"><b>{escape(title)}</b></a>'
     meta = f"⭐ {repo.stars:,}"
     pace = _format_momentum(momentum)
     if pace:
         meta += f" · {pace}"
-    growth = _format_delta(delta) if delta is not None else None
+    growth = _format_delta(delta, delta_period) if delta is not None else None
     if growth:
         meta += f" · {growth}"
     license_ = getattr(repo, "license", "") or ""
@@ -42,7 +47,8 @@ def _entry(repo, title, summary, describe, translate, delta=None, momentum=None)
 
 
 def build_messages(theme, repos, describe, translate=lambda s: s, titles=None,
-                   summaries=None, deltas=None, momenta=None) -> list[str]:
+                   summaries=None, deltas=None, momenta=None,
+                   delta_periods=None) -> list[str]:
     header = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
     if titles is None:
         titles = [r.full_name for r in repos]
@@ -52,10 +58,14 @@ def build_messages(theme, repos, describe, translate=lambda s: s, titles=None,
         deltas = [None] * len(repos)
     if momenta is None:
         momenta = [None] * len(repos)
+    if delta_periods is None:
+        delta_periods = ["weekly"] * len(repos)
     messages: list[str] = []
     current = header
-    for repo, title, summary, delta, momentum in zip(repos, titles, summaries, deltas, momenta):
-        block = _entry(repo, title, summary, describe, translate, delta, momentum)
+    for repo, title, summary, delta, momentum, delta_period in zip(
+            repos, titles, summaries, deltas, momenta, delta_periods):
+        block = _entry(repo, title, summary, describe, translate, delta, momentum,
+                       delta_period)
         candidate = f"{current}\n\n{block}"
         if len(candidate) > TELEGRAM_LIMIT:
             messages.append(current)

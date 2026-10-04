@@ -238,6 +238,33 @@ def test_load_themes_reads_delta_days(tmp_path):
     assert load_themes(str(p))[0].delta_days == 7
 
 
+def test_load_themes_github_trending_defaults_empty(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    assert load_themes(str(p))[0].github_trending == ()
+
+
+def test_load_themes_reads_github_trending_windows(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text(
+        '[[theme]]\nkey="k"\nname="N"\nquery="q"\n'
+        'github_trending = ["weekly", "daily", "weekly"]\n')
+    assert load_themes(str(p))[0].github_trending == ("weekly", "daily")
+
+
+def test_load_themes_github_trending_accepts_one_string(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ngithub_trending = "weekly"\n')
+    assert load_themes(str(p))[0].github_trending == ("weekly",)
+
+
+def test_load_themes_rejects_unknown_trending_window(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\ngithub_trending = ["hourly"]\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))
+
+
 def _queries(theme):
     q = theme.query
     return q if isinstance(q, tuple) else (q,)
@@ -280,6 +307,13 @@ def test_prod_themes_widen_starved_queries():
     assert themes["ai-agents"].ai_cap is None
     assert themes["dev-tools"].ai_cap == 2
     assert themes["movers"].ai_cap == 4
+    assert themes["movers"].github_trending == ("daily", "weekly")
+    assert themes["movers"].delta_days == 7
+    assert themes["movers"].at == ((6, 19),)
+    assert "created:>{since:120d}" in themes["movers"].query
+    for key, theme in themes.items():
+        if key != "movers":
+            assert theme.github_trending == (), key
     assert themes["crypto"].min_score == 7
     assert all("stars:>10" in q for q in _queries(themes["crypto"]))
 
