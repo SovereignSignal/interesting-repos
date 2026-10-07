@@ -3,7 +3,7 @@ import os
 import time
 from datetime import datetime, timezone, date
 
-from bot.config import expand_since
+from bot.config import apply_star_ceiling, expand_since
 from bot.github import (
     search_repos, fetch_repos, readme_first_line, readme_parts,
     github_rate_remaining, reset_github_rate_remaining,
@@ -13,7 +13,7 @@ from bot.source_health import (
     THIN_POST_BELOW, report_source_health, short_reason, thin_post_line,
 )
 from bot.filters import (
-    clean, cap_agent_skills, cap_ai, star_velocity, age_days,
+    clean, cap_agent_skills, cap_ai, cap_stars, star_velocity, age_days,
     is_ai_repo, is_empty_metadata,
 )
 from bot.ranker import rank
@@ -106,12 +106,14 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                         config.ollama_model, config.ollama_api_key)
         if config.ollama_host else (None, []))
     degraded = not dry_run and bool(config.ollama_host) and curator_model is None
-    # Titles + translation sit outside the curator chain. A 200 with blank
+    # Translation sits outside the curator chain. Titles are the repo name
+    # (or a qualifying README H1) and do not call a model. A 200 with blank
     # content (Gemma 4 thinking) used to look like "base unavailable" and page
-    # every cron; llm_reachable now treats HTTP 200 as live, and titles/translation
-    # send think=False so content is actually filled. resolve_title_model also
-    # tries the `-cloud` sibling of a leftover local-offload tag. Skip when
-    # degraded (whole run is stars-only; don't re-ping a dead base).
+    # every cron; llm_reachable now treats HTTP 200 as live, and translation
+    # sends think=False so content is actually filled. resolve_title_model
+    # (historical name) also tries the `-cloud` sibling of a leftover
+    # local-offload tag. Skip when degraded (whole run is stars-only; don't
+    # re-ping a dead base).
     if not config.ollama_host or curator_model is None:
         title_model, title_via = "", TITLE_VIA_NONE
     else:
@@ -119,7 +121,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             config.ollama_host, config.ollama_model, curator_model,
             config.ollama_api_key, ping=llm_reachable)
         if title_model != config.ollama_model:
-            log.info("titles/translation using %s (configured base %s, via %s)",
+            log.info("translation using %s (configured base %s, via %s)",
                      title_model, config.ollama_model, title_via)
     claimed: set = set()        # repo ids already taken by an earlier theme THIS run
     results: dict = {}          # theme.key -> picked repos
@@ -130,12 +132,17 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # A quiet slot is not recorded here. Alerted after delivery, never on the digest.
     scoring_fallbacks: list[tuple[str, str]] = []
 
-    readme_cache: dict[str, tuple[str, str]] = {}
+    readme_cache: dict[str, tuple] = {}
+
+    def _readme(full_name: str) -> tuple:
+        cached = readme_cache.get(full_name)
+        if not cached:
+            cached = readme_parts(full_name, token=config.github_token)
+            readme_cache[full_name] = cached
+        return cached
 
     def describe(r):
-        first, _ = readme_cache.get(r.full_name) or readme_parts(
-            r.full_name, token=config.github_token)
-        return first
+        return _readme(r.full_name)[0]
 
     def translate(text):
         return translate_to_english(text, host=config.ollama_host,
@@ -155,7 +162,8 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             pages = (1, 2) if theme.ai_cap is not None else (1,)
             for q in queries:
                 for page in pages:
-                    for r in search_repos(expand_since(q, today), sort=theme.sort,
+                    searched = apply_star_ceiling(expand_since(q, today), theme.max_stars)
+                    for r in search_repos(searched, sort=theme.sort,
                                           order=theme.order, token=config.github_token,
                                           per_page=SEARCH_PER_PAGE, page=page):
                         if r.id not in seen_ids:
@@ -214,6 +222,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 repos = kept
             repos = cap_agent_skills(repos, theme.agent_skill_cap)
             repos = cap_ai(repos, theme.ai_cap)
+            repos = cap_stars(repos, theme.max_stars, theme.max_stars_exempt_days, today)
             repos = repos[:CANDIDATE_LIMIT]
             n_cap = len(repos)
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
@@ -279,18 +288,19 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             repos_ = [p.repo for p in picked]
             whys = [p.why for p in picked]
             summaries = None
+            headings = None
             if config.ollama_host:
                 excerpts = []
+                headings = []
                 for r in repos_:
-                    first, excerpt = readme_cache.get(r.full_name) or readme_parts(
-                        r.full_name, token=config.github_token)
-                    readme_cache[r.full_name] = (first, excerpt)
-                    excerpts.append(excerpt)
+                    parts = _readme(r.full_name)
+                    excerpts.append(parts[1] if len(parts) > 1 else "")
+                    headings.append(parts[2] if len(parts) > 2 else "")
                 summaries = make_summaries(repos_, excerpts, whys=whys, host=config.ollama_host,
                                            model=curator_model or "", api_key=config.ollama_api_key)
-            titles = make_titles(repos_, host=config.ollama_host,
-                                 model=title_model or config.ollama_model,
-                                 api_key=config.ollama_api_key)
+            # Titles never call a model. The H1 is available when the README
+            # was already fetched for the summary; otherwise the repo name is used.
+            titles = make_titles(repos_, headings=headings)
             deltas = None
             delta_periods = None
             if theme.delta_days:    # annotate the meta line with '+N★ this week'
@@ -354,7 +364,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             # scoring DM would double-page the same outage.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        "⚠️ interesting-repos: Ollama unreachable/unauthorized — this run is "
-                       "degraded (stars-only picks, no AI titles/blurbs/translation). "
+                       "degraded (stars-only picks, no AI blurbs/translation). "
                        "Check OLLAMA_API_KEY in Railway.")
         elif scoring_fallbacks:
             # Reachable model, but scoring returned nothing usable. Do not send
@@ -378,8 +388,8 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             # base). A working cloud alias of OLLAMA_MODEL is via=base and stays silent.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
                        f"⚠️ interesting-repos: base model {config.ollama_model} unavailable — "
-                       f"titles and translation ran on {title_model} "
-                       "(curation unaffected). "
+                       f"translation ran on {title_model} "
+                       "(curation unaffected; titles are the repo name). "
                        "Update OLLAMA_MODEL in Railway.")
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,

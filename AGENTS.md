@@ -18,9 +18,10 @@ it with `--dry-run`, which prints the digest instead of sending to Telegram/Slac
   (strips `at`, so you do not need to copy `themes.toml`).
 - **`STATE_DIR` defaults to `/data`** (the Railway volume), which doesn't exist here — set it to a
   writable temp dir for local runs, e.g. `STATE_DIR=/tmp/ir-state`.
-- **Leave `OLLAMA_HOST` blank to disable all LLM calls** (curation, titles, summaries, translation).
+- **Leave `OLLAMA_HOST` blank to disable all LLM calls** (curation, summaries, translation).
+  Titles are always the repo name (or a qualifying README H1) and do not call a model.
   With no Ollama key available, this is the way to run end-to-end: themes fall back to top-by-stars
-  and descriptions/titles use deterministic fallbacks. It still hits the **real** GitHub Search API
+  and descriptions use the repo's own text. It still hits the **real** GitHub Search API
   (works unauthenticated at a low rate limit; set `GITHUB_TOKEN` to raise it).
 - **Slot matching applies to dry runs too** unless you pass `--theme KEY` (strips `at`) or
   `--now` to pick a grid cell. Grid is in `CLAUDE.md`.

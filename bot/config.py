@@ -57,6 +57,45 @@ def _parse_trending(raw) -> tuple:
     return tuple(periods)
 
 
+_STARS_GT = re.compile(r"stars:(>=|>)(\d+)")
+
+
+def _optional_int(raw, field: str, minimum: int) -> int | None:
+    """A themes.toml integer, or None when the key is absent. Bool is rejected
+    (it is an int subclass). Out of range fails at load, not mid-run."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise SystemExit(f"themes.toml: {field} must be an integer, got {raw!r}")
+    if raw < minimum:
+        raise SystemExit(f"themes.toml: {field} must be >= {minimum}, got {raw}")
+    return raw
+
+
+def apply_star_ceiling(query: str, max_stars: int | None) -> str:
+    """Cap a ``pushed:`` backfill so search does not return the famous head.
+
+    GitHub Search does not intersect ``stars:>N`` with a second ``stars:<M``;
+    the range form ``stars:N..M`` is what excludes giants. Queries without
+    ``pushed:`` are unchanged, so a ``created:`` window can still surface a
+    young repo above the ceiling (``cap_stars`` exempts those by age).
+    """
+    if not max_stars or "pushed:" not in query:
+        return query
+    match = _STARS_GT.search(query)
+    if match:
+        low = int(match.group(2))
+        if match.group(1) == ">":
+            low += 1
+        high = int(max_stars)
+        if low > high:
+            low = high
+        return query[:match.start()] + f"stars:{low}..{high}" + query[match.end():]
+    if re.search(r"stars:(?:<=|<|\d+\.\.)", query):
+        return query
+    return f"{query} stars:<={int(max_stars)}"
+
+
 def expand_since(query: str, today: date) -> str:
     def repl(m: "re.Match[str]") -> str:
         days = int(m.group(1))
@@ -85,6 +124,12 @@ class Theme:
     # Empty ⇒ search only. These repos are any age; the created: qualifier does
     # not apply to them.
     github_trending: tuple = ()
+    # Drop repos above this star count. None ⇒ no ceiling. ``pushed:`` queries
+    # also get a stars:N..M range so the star-sorted page is not all giants.
+    max_stars: int | None = None
+    # Repos created within this many days skip max_stars (a young breakout).
+    # None + max_stars set ⇒ the ceiling applies at every age.
+    max_stars_exempt_days: int | None = None
     at: tuple | None = None
 
 
@@ -114,6 +159,9 @@ def load_themes(path: str) -> list[Theme]:
             min_score=t.get("min_score", 6),
             delta_days=t.get("delta_days"),
             github_trending=_parse_trending(t.get("github_trending")),
+            max_stars=_optional_int(t.get("max_stars"), "max_stars", 1),
+            max_stars_exempt_days=_optional_int(
+                t.get("max_stars_exempt_days"), "max_stars_exempt_days", 0),
             at=at,
         ))
     return themes

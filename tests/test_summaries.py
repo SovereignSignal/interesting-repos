@@ -9,6 +9,9 @@ from bot.summaries import make_summaries
 class R:
     full_name: str = "a/b"
     description: str = "d"
+    language: str = ""
+    license: str = ""
+    stars: int = 10
 
 
 def _client(handler):
@@ -54,16 +57,22 @@ def test_make_summaries_blank_blurb_becomes_none():
     assert out == [None, "Real blurb."]
 
 
-def test_make_summaries_threads_whys_into_prompt():
+def test_make_summaries_does_not_send_curator_whys():
+    # The why is scoring rationale. #388 quoted "star growth looks inflated"
+    # from it. The notes stay at the call site and out of the prompt.
     captured = {}
     def handler(request):
         import json as _json
         captured["p"] = _json.loads(request.content)["messages"][0]["content"]
         return httpx.Response(200, json={"message": {"content": '["Blurb."]'}})
-    make_summaries([R("a/x")], ["readme text"], whys=["first OSS tool doing Y"],
+    make_summaries([R("a/x", language="Python", stars=64, license="MIT")],
+                   ["readme text"], whys=["star growth looks inflated"],
                    host="http://x", model="m", client=_client(handler))
-    assert "first OSS tool doing Y" in captured["p"]
-    assert "why" in captured["p"].lower()   # prompt asks for the why-it-matters angle
+    prompt = captured["p"]
+    assert "star growth looks inflated" not in prompt
+    assert "language: Python" in prompt
+    assert "160" in prompt
+    assert "notable" in prompt.lower()   # the ban, not a request to write it
 
 
 def test_make_summaries_disables_thinking():
@@ -74,6 +83,109 @@ def test_make_summaries_disables_thinking():
         return httpx.Response(200, json={"message": {"content": '["Blurb."]'}})
     make_summaries([R("a/x")], host="http://x", model="m", client=_client(handler))
     assert seen["think"] is False
+
+
+def test_prepare_splits_a_sentence_that_ends_on_a_number():
+    # "versions 4 through 22. It is notable…" — the dot after 22 is a sentence
+    # end. "v1.2 ships." must not split on the version dot.
+    from bot.summaries import prepare_public_blurb
+    repo = R("Napster2210/ngx-spinner", language="CSS", license="MIT")
+    out = prepare_public_blurb(
+        "ngx-spinner supports Angular versions 4 through 22. It is notable for its maturity.",
+        repo,
+    )
+    assert out == "ngx-spinner supports Angular versions 4 through 22."
+    version = prepare_public_blurb("Library v1.2 ships one binary.", repo)
+    assert version == "Library v1.2 ships one binary."
+
+
+def test_prepare_keeps_the_first_sentence_and_drops_notable():
+    from bot.summaries import prepare_public_blurb
+    repo = R("wellwelwel/lagune", language="TypeScript")
+    posted = (
+        "Lagune is a security copilot that points an AI agent at a codebase "
+        "to guide developers and auditors through relevant security work "
+        "without requiring an API key. It is notable for supporting 73 agents "
+        "and any programming language, though it remains early-stage with low traction."
+    )
+    out = prepare_public_blurb(posted, repo)
+    assert out.startswith("Lagune is a security copilot")
+    assert "notable" not in out.lower()
+    assert "low traction" not in out.lower()
+    assert len(out) <= 160
+
+
+def test_prepare_rejects_a_rust_claim_on_a_python_repo():
+    from bot.summaries import prepare_public_blurb
+    repo = R("propavingk/SlotDrift", language="Python", license="MIT")
+    posted = ("SlotDrift is a Rust tool that analyzes captured Solana slot records. "
+              "It is notable as an independent observability tool.")
+    assert prepare_public_blurb(posted, repo) is None
+    # A component mention with no identity claim still names the other language.
+    assert prepare_public_blurb(
+        "Analyzes slots, with an independent Rust engine.", repo) is None
+    # A PoC can name the target language. Tooling can name another language
+    # without claiming the repo is written in it.
+    poc = R("ressl/cve-2026-87902-poc", language="Python")
+    kept_poc = prepare_public_blurb(
+        "A proof-of-concept for a path traversal in WordPress Core enabling local PHP inclusion.",
+        poc)
+    assert kept_poc and "PHP inclusion" in kept_poc
+    js = R("vercel/next.js", language="JavaScript")
+    kept_js = prepare_public_blurb(
+        "Next.js is a React framework for the web with Rust-based tooling for faster builds.",
+        js)
+    assert kept_js and "Rust-based" in kept_js
+    rust = R("benbenbang/libitofin", language="Rust")
+    kept = prepare_public_blurb(
+        "libitofin is a Rust port of QuantLib with Python and Go bindings.", rust)
+    assert kept and "Rust port" in kept
+
+
+def test_prepare_strips_a_leading_slug_and_rejects_a_license_mismatch():
+    from bot.summaries import prepare_public_blurb
+    repo = R("ppy/osu-web", language="PHP", license="AGPL-3.0")
+    out = prepare_public_blurb(
+        "ppy/osu-web is the browser-facing frontend for the osu! rhythm game. "
+        "It is notable as a large Laravel codebase.",
+        repo,
+    )
+    assert out.startswith("osu-web is the browser-facing")
+    assert not out.lower().startswith("ppy/")
+    assert "notable" not in out.lower()
+    assert prepare_public_blurb("A PHP frontend under the MIT license.", repo) is None
+
+
+def test_prepare_clips_a_long_sentence_on_a_comma():
+    from bot.summaries import prepare_public_blurb
+    repo = R("omlahore/RemoveMacAI", language="Swift", license="MIT")
+    posted = (
+        "A native macOS app and CLI to disable Apple Intelligence, delete its models, "
+        "and silence analytics, ads, pop-ups, and background updaters, with every change "
+        "previewable and reversible."
+    )
+    out = prepare_public_blurb(posted, repo)
+    assert out.endswith("background updaters")
+    assert "every change" not in out
+    assert len(out) <= 160
+
+
+def test_prepare_rejects_internal_judgment_in_the_only_sentence():
+    from bot.summaries import prepare_public_blurb
+    repo = R("omlahore/RemoveMacAI", language="Swift", license="MIT")
+    assert prepare_public_blurb(
+        "RemoveMacAI drew press coverage, though its star growth looks inflated.",
+        repo,
+    ) is None
+
+
+def test_make_summaries_filters_a_bad_blurb_to_none():
+    repo = R("propavingk/SlotDrift", language="Python")
+    out = make_summaries(
+        [repo], host="http://x", model="m",
+        client=_content_client('["SlotDrift is a Rust tool that analyzes slots."]'),
+    )
+    assert out == [None]
 
 
 def test_make_summaries_works_without_whys():

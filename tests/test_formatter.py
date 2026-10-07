@@ -60,8 +60,10 @@ def test_build_messages_applies_translate_to_description():
 
 
 def test_build_messages_splits_over_limit():
-    repos = [R(i, f"a/{i}", "u", "x" * 1000, i, "Go") for i in range(10)]
-    titles = [f"T{i}" for i in range(10)]
+    # Blurbs are capped at 160 characters, so the split needs more items
+    # than it did when a description could be 1000 characters.
+    repos = [R(i, f"a/{i}", "u", "x" * 1000, i, "Go") for i in range(30)]
+    titles = [f"T{i}" for i in range(30)]
     msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=titles)
     assert len(msgs) > 1
     assert all(len(m) <= TELEGRAM_LIMIT for m in msgs)
@@ -79,6 +81,25 @@ def test_build_messages_falls_back_when_summary_none():
     m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
                        summaries=[None])[0]
     assert "raw description" in m
+
+
+def test_build_messages_rejects_a_language_claim_and_uses_the_readme_line():
+    # #366: "SlotDrift is a Rust tool…" while the metadata line says Python.
+    # The repo's own description also names a Rust engine, so the README line
+    # (no language claim) is what ships.
+    repos = [R(1, "propavingk/SlotDrift", "https://github.com/propavingk/SlotDrift",
+               "Slot continuity and fork analysis, with an independent Rust engine.",
+               64, "Python", license="MIT")]
+    summary = ("SlotDrift is a Rust tool that analyzes captured Solana slot records "
+               "to identify gaps, skips, duplicate slots, and orphaned branches. "
+               "It is notable as an independent observability tool.")
+    m = build_messages(
+        _theme(), repos, titles=["SlotDrift"], summaries=[summary],
+        describe=lambda r: "Slot continuity and fork analysis for captured Solana slot records.",
+    )[0]
+    assert "Rust" not in m
+    assert "notable" not in m.lower()
+    assert "Slot continuity and fork analysis for captured Solana slot records." in m
 
 
 from bot.formatter import _format_delta

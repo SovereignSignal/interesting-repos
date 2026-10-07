@@ -174,6 +174,28 @@ def cap_ai(repos: list, cap) -> list:
     return out
 
 
+def cap_stars(repos: list, max_stars, exempt_days, today: date) -> list:
+    """Drop repos above ``max_stars``.
+
+    ``max_stars`` None leaves the list unchanged. A repo created within
+    ``exempt_days`` is kept even above the ceiling (a young breakout can be
+    large). Unknown ``created_at`` is not exempt. Order is preserved.
+    """
+    if not max_stars:
+        return list(repos)
+    kept = []
+    for repo in repos:
+        if repo.stars <= max_stars:
+            kept.append(repo)
+            continue
+        if exempt_days is None:
+            continue
+        age = age_days(getattr(repo, "created_at", "") or "", today)
+        if age is not None and age <= exempt_days:
+            kept.append(repo)
+    return kept
+
+
 def cap_agent_skills(repos: list, cap) -> list:
     """Shape a theme's candidate pool per its agent_skill_cap (order preserved):
     None → unchanged; 0 → drop every AI repo (the non-AI highlight); N → keep all
