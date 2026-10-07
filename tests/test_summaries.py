@@ -71,7 +71,9 @@ def test_make_summaries_does_not_send_curator_whys():
     prompt = captured["p"]
     assert "star growth looks inflated" not in prompt
     assert "language: Python" in prompt
-    assert "160" in prompt
+    assert "150" in prompt
+    assert "160" not in prompt
+    assert "complete sentence" in prompt.lower()
     assert "notable" in prompt.lower()   # the ban, not a request to write it
 
 
@@ -165,9 +167,10 @@ def test_prepare_clips_a_long_sentence_on_a_comma():
         "previewable and reversible."
     )
     out = prepare_public_blurb(posted, repo)
-    assert out.endswith("background updaters")
+    assert out.endswith("background updaters.")
     assert "every change" not in out
     assert len(out) <= 160
+    assert "..." not in out
 
 
 def test_prepare_rejects_internal_judgment_in_the_only_sentence():
@@ -192,3 +195,106 @@ def test_make_summaries_works_without_whys():
     out = make_summaries([R("a/x")], ["ex"], host="http://x", model="m",
                          client=_content_client('["Blurb."]'))
     assert out == ["Blurb."]
+
+
+_DANGLING = {
+    "a", "an", "the", "of", "with", "to", "for", "and", "or", "by",
+    "in", "on", "from", "via", "using",
+}
+
+
+def _assert_closed(text: str) -> None:
+    assert text.endswith(".")
+    assert 40 <= len(text) <= 160
+    assert "..." not in text and "…" not in text
+    assert text[:-1].split()[-1].lower().strip(".,;:!?") not in _DANGLING
+
+
+def test_prepare_closes_the_vulnhunter_blurb_on_a_clause():
+    # Post #389. The writer stopped on "sandboxed" (156 chars). A longer
+    # source hard-cut at the same word. Both close before "with".
+    from bot.summaries import prepare_public_blurb
+    repo = R("nealbridges/VulnHunter", language="Python", license="Apache-2.0")
+    posted = (
+        "VulnHunter is an Apache-2.0 AI security scanner maintained as a "
+        "harness-portable fork of Capital One's tool and used to prove "
+        "vulnerabilities with sandboxed"
+    )
+    expected = (
+        "VulnHunter is an Apache-2.0 AI security scanner maintained as a "
+        "harness-portable fork of Capital One's tool and used to prove "
+        "vulnerabilities."
+    )
+    out = prepare_public_blurb(posted, repo)
+    assert out == expected
+    _assert_closed(out)
+    assert "sandboxed" not in out
+    longer = posted + " execution environments today"
+    assert len(longer) > 160
+    assert prepare_public_blurb(longer, repo) == expected
+
+
+def test_prepare_closes_the_pbitm_blurb_on_a_clause():
+    # Post #389. 153 characters, unfinished on "session viewing".
+    from bot.summaries import prepare_public_blurb
+    repo = R("P-BitM-Framework/P-BitM", language="Python", license="GPL-3.0")
+    posted = (
+        "P-BitM is a GPL-3.0 Python platform for controlled "
+        "browser-in-the-middle security assessments with an admin dashboard, "
+        "isolated browsers, session viewing"
+    )
+    out = prepare_public_blurb(posted, repo)
+    assert out == (
+        "P-BitM is a GPL-3.0 Python platform for controlled "
+        "browser-in-the-middle security assessments with an admin dashboard, "
+        "isolated browsers."
+    )
+    _assert_closed(out)
+    assert "session viewing" not in out
+
+
+def test_prepare_closes_a_long_blurb_with_no_clause_boundary():
+    # No comma, semicolon, dash, or and/with/that/which. The cap must still
+    # end on a word and a period, and "using" is not a place to stop.
+    from bot.summaries import prepare_public_blurb
+    repo = R("a/scanner")
+    posted = (
+        "Scanner examines container images inside isolated runners during "
+        "nightly passes across production fleets nightly nightly nightly "
+        "nightly nightly nightly using leftovers"
+    )
+    assert len(posted) > 160
+    out = prepare_public_blurb(posted, repo)
+    _assert_closed(out)
+    assert "using" not in out
+    assert "leftovers" not in out
+    stem = out[:-1]
+    assert posted.startswith(stem)
+    assert posted[len(stem)] == " "
+
+
+def test_prepare_keeps_a_near_cap_description_with_a_real_final_clause():
+    # Unfinished and close to the cap, but the words after the last "and" are
+    # a real clause. Closing it must not drop them the way a remnant is dropped.
+    from bot.summaries import prepare_public_blurb
+    repo = R("rust-dd/stochastic-rs", language="Rust", license="Apache-2.0")
+    posted = (
+        "High-performance quantitative finance in Rust providing stochastic "
+        "processes, option pricing, calibration, and risk tools for researchers "
+        "who want them"
+    )
+    assert len(posted) >= 140
+    out = prepare_public_blurb(posted, repo)
+    assert out.endswith("who want them.")
+    assert "risk tools" in out
+    _assert_closed(out)
+
+
+def test_prepare_omits_a_cut_that_would_be_a_fragment():
+    # The only clause boundary is an early comma, so the closed blurb would
+    # be "Go." Callers fall back to the repo description instead.
+    from bot.summaries import prepare_public_blurb
+    repo = R("a/b", language="Go", description="A maintained scanner that proves findings.")
+    posted = "Go, " + ("scanner examines images inside isolated runners " * 6)
+    assert len(posted) > 160
+    assert prepare_public_blurb(posted, repo) is None

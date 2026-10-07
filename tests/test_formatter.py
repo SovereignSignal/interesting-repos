@@ -83,6 +83,17 @@ def test_build_messages_falls_back_when_summary_none():
     assert "raw description" in m
 
 
+def test_build_messages_uses_the_description_when_the_blurb_is_a_fragment():
+    # A cut that cannot make a clause falls through to the GitHub description,
+    # which is trimmed by the same rules. A fragment is not what gets posted.
+    repos = [R(1, "a/b", "u", "A maintained scanner that proves findings.", 10, "Go")]
+    fragment = "Go, " + ("scanner examines images inside isolated runners " * 6)
+    m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
+                       summaries=[fragment])[0]
+    assert "A maintained scanner that proves findings." in m
+    assert "scanner examines images inside" not in m
+
+
 def test_build_messages_rejects_a_language_claim_and_uses_the_readme_line():
     # #366: "SlotDrift is a Rust tool…" while the metadata line says Python.
     # The repo's own description also names a Rust engine, so the README line
