@@ -8,7 +8,12 @@ from bot.github import (
     search_repos, fetch_repos, readme_first_line, readme_parts,
     github_rate_remaining, reset_github_rate_remaining,
 )
-from bot.trending import collect_trending, merge_trending
+from bot.trending import collect_trending, merge_trending, prefer_gain
+from bot.gitnova import collect_gitnova, is_likely_inflated, public_summary
+from bot.candidates import (
+    trending_for_theme, gitnova_for_theme, repo_from_trending,
+    looks_ai, blocked_by_ceiling, with_description, query_languages,
+)
 from bot.source_health import (
     THIN_POST_BELOW, report_source_health, short_reason, thin_post_line,
 )
@@ -29,46 +34,262 @@ from bot.alerts import (
     TITLE_VIA_CURATOR, TITLE_VIA_NONE, resolve_curator, resolve_title_model,
     send_alert, llm_reachable,
 )
-from bot.state import load_state, save_state, unsent, record_sent, unposted, record_posted
+from bot.state import (
+    load_state, save_state, unsent, record_sent, unposted, record_posted, posted_ids,
+)
 
 log = logging.getLogger("bot")
 
 # Most candidates to hand the LLM curator per theme (keeps the prompt tight/fast).
 CANDIDATE_LIMIT = 30
+# Core-API hydrates per theme for repos the page/GitNova did not already fully
+# describe. Search hits are already complete. Tests leave this off so a Theme()
+# fixture stays on search (+ an explicit github_trending window).
+EXTRA_SOURCES = True
+HYDRATE_LIMIT = 8
 # Cheap watch query folded into today's snapshot so Movers has mid-week memory
 # of repos that weren't in that hour's theme search. Disposable; failures warn.
 WATCH_QUERY = "created:>{since:120d} stars:>100"
 SEARCH_PER_PAGE = 100
 
 
-def _merge_github_trending(theme, repos: list, token: str):
-    """Append GitHub Trending repos the search pool did not already return.
+def _scheduled(themes, now: datetime) -> list:
+    chosen = []
+    for theme in themes:
+        if theme.at is not None and (now.weekday(), now.hour) not in theme.at:
+            continue
+        chosen.append(theme)
+    return chosen
 
-    Returns ``(repos, gains, added, hits)``. ``gains`` maps repo id to
-    ``(stars_gained, period)`` for every resolved hit, including repos search
-    already had. Never raises — a scrape or hydrate failure leaves the search
-    pool in place.
+
+def _load_external(themes, now: datetime, token_secrets):
+    """Scrape Trending and GitNova once per run. Never raises.
+
+    Returns ``(trending_hits, gitnova_hits, outcomes)``. ``outcomes`` is a
+    list of source-health tuples for sources this run actually tried.
+    ``token_secrets`` is only used to scrub a failure string.
     """
-    if not theme.github_trending:
-        return repos, {}, 0, 0
-    try:
-        hits = collect_trending(theme.github_trending)
-    except Exception:
-        log.warning("theme %s: github trending fetch failed; search pool only",
-                    theme.key, exc_info=True)
-        return repos, {}, 0, 0
-    known = {r.full_name.lower() for r in repos}
-    missing = [h.full_name for h in hits if h.full_name.lower() not in known]
-    hydrated: list = []
-    if missing:
+    scheduled = _scheduled(themes, now)
+    periods: list[str] = []
+    languages: list[str] = []
+    for theme in scheduled:
+        windows = theme.github_trending or (("daily", "weekly") if EXTRA_SOURCES else ())
+        for period in windows:
+            if period not in periods:
+                periods.append(period)
+        if EXTRA_SOURCES or theme.github_trending:
+            for language in query_languages(theme):
+                if language.lower() not in {item.lower() for item in languages}:
+                    languages.append(language)
+    # Language pages are the extra-source path. Movers' own windows stay global.
+    if not EXTRA_SOURCES:
+        languages = []
+
+    trending_hits: list = []
+    gitnova_hits: list = []
+    outcomes: list[tuple] = []
+    if periods:
         try:
-            hydrated = fetch_repos(missing, token=token)
+            kwargs = {"languages": tuple(languages)} if languages else {}
+            trending_hits = collect_trending(tuple(periods), **kwargs)
+            status = "ok" if trending_hits else "empty"
+            outcomes.append(("github_trending", status, len(trending_hits), ""))
+            if not trending_hits:
+                log.warning("github trending parsed no repos; search pool only")
+        except Exception as exc:
+            log.warning("github trending fetch failed; search pool only", exc_info=True)
+            trending_hits = []
+            outcomes.append(("github_trending", "error", 0, _failure_reason(exc, token_secrets)))
+    if EXTRA_SOURCES and scheduled:
+        try:
+            gitnova_hits, status, error = collect_gitnova()
+        except Exception as exc:
+            log.warning("gitnova fetch failed; search pool only", exc_info=True)
+            gitnova_hits, status, error = [], "error", _failure_reason(exc, token_secrets)
+        outcomes.append(("gitnova", status, len(gitnova_hits), error if status == "error" else ""))
+        if status != "ok":
+            log.warning("gitnova %s; search pool only (%s)", status, error or "no rows")
+    return trending_hits, gitnova_hits, outcomes
+
+
+def _push_name(ordered: list, seen: set, name: str) -> None:
+    key = name.lower()
+    if key in seen:
+        return
+    seen.add(key)
+    ordered.append(name)
+
+
+def _merge_external(theme, repos: list, trending_hits: list, gitnova_hits: list,
+                    inflated: set, blocked_ids: set, token: str):
+    """Fold Trending and GitNova into ``repos``.
+
+    Returns ``(repos, gains, trending_added, trending_considered, gitnova_added,
+    inflated_dropped)``. Page rows that already carry a GitHub id are usable
+    without an API call. ``HYDRATE_LIMIT`` core GETs cover, in order: over-ceiling
+    stubs (the young-repo exemption needs ``created_at``), id-less names (state
+    dedupe needs the numeric id), then the highest page-gain stubs. A hydrate
+    failure keeps the page stub. Never raises.
+    """
+    dropped = 0
+    kept = []
+    for repo in repos:
+        if repo.full_name.lower() in inflated:
+            dropped += 1
+            continue
+        kept.append(repo)
+    repos = kept
+    search_names = {repo.full_name.lower() for repo in repos}
+
+    thits = [
+        hit for hit in trending_for_theme(trending_hits, theme, extra=EXTRA_SOURCES)
+        if hit.full_name.lower() not in inflated
+    ]
+    ghits = [
+        hit for hit in gitnova_for_theme(gitnova_hits, theme)
+        if hit.full_name.lower() not in inflated
+        and not blocked_by_ceiling(hit.stars, hit.age_days, theme)
+    ]
+    if theme.ai_cap == 0 or theme.agent_skill_cap == 0:
+        thits = [
+            hit for hit in thits
+            if not looks_ai(hit.full_name, hit.description, hit.language)
+        ]
+        ghits = [
+            hit for hit in ghits
+            if not looks_ai(hit.full_name, hit.summary, hit.language, hit.topics)
+        ]
+
+    known = set(search_names)
+    ids = {repo.id for repo in repos}
+    stubs = []
+    for hit in thits:
+        key = hit.full_name.lower()
+        if key in known or not hit.repo_id or hit.repo_id in ids or hit.repo_id in blocked_ids:
+            continue
+        stub = repo_from_trending(hit)
+        if stub is None or stub.is_fork:
+            continue
+        stubs.append(stub)
+        known.add(key)
+        ids.add(stub.id)
+    repos = list(repos) + stubs
+
+    trending_idless = []
+    for hit in thits:
+        key = hit.full_name.lower()
+        if key in known or hit.repo_id:
+            continue
+        trending_idless.append(hit.full_name)
+        known.add(key)
+    gitnova_idless = []
+    for hit in ghits:
+        key = hit.full_name.lower()
+        if key in known:
+            continue
+        gitnova_idless.append(hit.full_name)
+        known.add(key)
+
+    over = [
+        stub for stub in stubs
+        if theme.max_stars and stub.stars > theme.max_stars and not stub.created_at
+    ]
+    over_names = {stub.full_name.lower() for stub in over}
+    others = [stub for stub in stubs if stub.full_name.lower() not in over_names and not stub.created_at]
+    gain_of = {hit.full_name.lower(): hit.gained for hit in thits}
+    others.sort(key=lambda stub: gain_of.get(stub.full_name.lower(), 0), reverse=True)
+
+    ordered: list[str] = []
+    seen_names: set[str] = set()
+    for stub in over:
+        _push_name(ordered, seen_names, stub.full_name)
+    for name in trending_idless:
+        _push_name(ordered, seen_names, name)
+    for name in gitnova_idless:
+        _push_name(ordered, seen_names, name)
+    for stub in others:
+        _push_name(ordered, seen_names, stub.full_name)
+    if len(ordered) > HYDRATE_LIMIT:
+        log.info("theme %s: enriched %d of %d external repos (core API budget)",
+                 theme.key, HYDRATE_LIMIT, len(ordered))
+        ordered = ordered[:HYDRATE_LIMIT]
+
+    fetched: dict = {}
+    if ordered:
+        try:
+            hydrated = fetch_repos(ordered, token=token)
         except Exception:
-            log.warning("theme %s: trending hydrate failed; search pool only",
+            log.warning("theme %s: external hydrate failed; keeping page data",
                         theme.key, exc_info=True)
-            hydrated = [None] * len(missing)
-    merged, gains = merge_trending(repos, hits, missing, hydrated)
-    return merged, gains, len(merged) - len(repos), len(hits)
+            hydrated = [None] * len(ordered)
+        for name, repo in zip(ordered, hydrated):
+            if repo is not None:
+                fetched[name.lower()] = repo
+
+    missing = []
+    aligned = []
+    for name in trending_idless:
+        key = name.lower()
+        if key not in {item.lower() for item in ordered}:
+            continue
+        missing.append(name)
+        aligned.append(fetched.get(key))
+    merged, gains = merge_trending(repos, thits, missing, aligned)
+
+    replaced = []
+    for repo in merged:
+        api = fetched.get(repo.full_name.lower())
+        if api is not None and (api.is_fork or api.is_archived):
+            gains.pop(repo.id, None)
+            if api.id != repo.id:
+                gains.pop(api.id, None)
+            continue
+        if api is None:
+            replaced.append(repo)
+            continue
+        if repo.id in gains and api.id != repo.id:
+            gains[api.id] = gains.pop(repo.id)
+        replaced.append(api)
+    merged = replaced
+
+    for hit in ghits:
+        key = hit.full_name.lower()
+        existing = next((repo for repo in merged if repo.full_name.lower() == key), None)
+        api = fetched.get(key)
+        if existing is not None:
+            if hit.stars_today:
+                gains[existing.id] = prefer_gain(
+                    gains.get(existing.id), hit.stars_today, "daily")
+            summary = public_summary(hit.summary)
+            if summary and not existing.description:
+                merged = [
+                    with_description(repo, summary) if repo.full_name.lower() == key else repo
+                    for repo in merged
+                ]
+            continue
+        if api is None or api.is_fork or api.is_archived or api.id in blocked_ids:
+            continue
+        api = with_description(api, public_summary(hit.summary))
+        if any(repo.id == api.id for repo in merged):
+            if hit.stars_today:
+                gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
+            continue
+        if hit.stars_today:
+            gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
+        merged.append(api)
+
+    trend_names = {hit.full_name.lower() for hit in thits}
+    trending_added = sum(
+        1 for repo in merged
+        if repo.full_name.lower() in trend_names and repo.full_name.lower() not in search_names
+    )
+    gitnova_names = {hit.full_name.lower() for hit in ghits}
+    gitnova_added = sum(
+        1 for repo in merged
+        if repo.full_name.lower() in gitnova_names and repo.full_name.lower() not in search_names
+        and repo.full_name.lower() not in trend_names
+    )
+    return merged, gains, trending_added, len(thits), gitnova_added, dropped
 
 
 def _failure_reason(exc: BaseException, config) -> str:
@@ -132,6 +353,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # A quiet slot is not recorded here. Alerted after delivery, never on the digest.
     scoring_fallbacks: list[tuple[str, str]] = []
 
+    trending_hits, gitnova_hits, extra_outcomes = _load_external(config.themes, now, config)
+    inflated = {hit.full_name.lower() for hit in gitnova_hits if is_likely_inflated(hit)}
+
     readme_cache: dict[str, tuple] = {}
 
     def _readme(full_name: str) -> tuple:
@@ -171,8 +395,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                             repos.append(r)
             if len(queries) > 1:
                 repos.sort(key=lambda r: r.stars, reverse=True)   # merged pool, best first
-            repos, theme_gains, trending_added, trending_hits = _merge_github_trending(
-                theme, repos, config.github_token)
+            blocked_ids = set(state.get(theme.key, []))
+            if not theme.delta_days:
+                blocked_ids |= posted_ids(state)
+            (repos, theme_gains, trending_added, trending_considered,
+             gitnova_added, inflated_dropped) = _merge_external(
+                theme, repos, trending_hits, gitnova_hits, inflated,
+                blocked_ids, config.github_token)
             gained[theme.key] = theme_gains
             if theme.github_trending and not theme_gains:
                 trending_empty.append(theme.key)
@@ -238,8 +467,11 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 funnel_args.extend((baseline_days, dropped_no_baseline))
             if theme.github_trending:
                 funnel += " trending_hits=%d trending_added=%d"
-                funnel_args.extend((trending_hits, trending_added))
+                funnel_args.extend((trending_considered, trending_added))
             log.info(funnel, *funnel_args)
+            if gitnova_added or inflated_dropped:
+                log.info("theme %s: gitnova_added=%d inflated_dropped=%d",
+                         theme.key, gitnova_added, inflated_dropped)
             # Stars fallback is not "none above the bar" — that line is the quiet slot.
             if repos and not picked and not fallback_reason:
                 log.info("theme %s: %d candidates, none above the quality bar",
@@ -407,6 +639,7 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
         if theme.key in outcomes:
             status, items, error = outcomes[theme.key]
             ordered.append((theme.key, status, items, error))
+    ordered.extend(extra_outcomes)
     try:
         report_source_health(
             ordered,

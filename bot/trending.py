@@ -6,9 +6,16 @@ GitHub publishes no trending API — the HTML list is the source. Movers ranks
 those repos by the page's own period gain ("14,507 stars this week") until a
 snapshot in ``STATE_DIR`` can supply an owned diff.
 
-Parsing stays on the two strings that identify a row: the ``<h2>`` repo link
-and the "N stars today/this week/this month" text. Class names are not
-required. ``Accept-Language: en`` keeps that sentence in English.
+Parsing stays on the strings that identify a row: the ``<h2>`` repo link, the
+"N stars today/this week/this month" text, and (when present) the description
+paragraph, ``itemprop="programmingLanguage"``, and ``record_id`` in the row.
+Class names are not required. A row with no period-gain is skipped. Missing
+id or description does not drop the row — the caller hydrates only if it
+still needs those fields. ``Accept-Language: en`` keeps the gain sentence in
+English.
+
+Optional per-language pages (``/trending/{language}?since=``) are extra
+windows for a theme whose query names ``language:``. A failed page is skipped.
 """
 import logging
 import re
@@ -38,6 +45,12 @@ _LABEL = {"today": "daily", "this week": "weekly", "this month": "monthly"}
 # Prefer the longer window when a repo is on more than one list, so a Sunday
 # Movers run labels the gain "this week" instead of "today".
 _PERIOD_RANK = {"weekly": 3, "monthly": 2, "daily": 1}
+_P = re.compile(r"<p\b[^>]*>([\s\S]*?)</p>", re.I)
+_LANG_PROP = re.compile(
+    r'itemprop="programmingLanguage"[^>]*>\s*([^<]+?)\s*<', re.I)
+_RECORD_ID = re.compile(
+    r'(?:record_id|repository_id)(?:"|&quot;|&#34;)\s*:\s*(\d+)')
+_LANG_SLUG = re.compile(r"[a-z0-9+.#]{1,40}")
 
 
 @dataclass(frozen=True)
@@ -46,6 +59,10 @@ class TrendingHit:
     gained: int
     period: str          # "daily", "weekly", or "monthly"
     stars: int = 0       # total on the page; the API count replaces it after hydrate
+    description: str = ""
+    language: str = ""
+    repo_id: int = 0     # GitHub numeric id from the page; 0 when the markup has none
+    is_fork: bool = False
 
 
 def _parse_count(raw: str) -> int | None:
@@ -60,6 +77,37 @@ def _parse_count(raw: str) -> int | None:
         return int(float(s) * mult)
     except ValueError:
         return None
+
+
+def _article_description(article: str) -> str:
+    best = ""
+    for match in _P.finditer(article):
+        text = re.sub(r"<[^>]+>", " ", match.group(1))
+        text = re.sub(r"\s+", " ", text).strip()
+        if text.lower() in {"star", "sponsor"}:
+            continue
+        if len(text) > len(best):
+            best = text
+    return best[:300]
+
+
+def _article_language(article: str) -> str:
+    match = _LANG_PROP.search(article)
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def _article_repo_id(article: str) -> int:
+    # record_id sits on the repo heading; repository_id on the star control.
+    # Either is the GitHub database id. The first one in the row is enough.
+    match = _RECORD_ID.search(article)
+    if not match:
+        return 0
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return 0
 
 
 def parse_trending_html(html: str) -> list[TrendingHit]:
@@ -92,7 +140,13 @@ def parse_trending_html(html: str) -> list[TrendingHit]:
             if count_m:
                 stars = _parse_count(count_m.group(0)) or 0
         seen.add(key)
-        hits.append(TrendingHit(full_name, gained, period, stars))
+        hits.append(TrendingHit(
+            full_name, gained, period, stars,
+            description=_article_description(article),
+            language=_article_language(article),
+            repo_id=_article_repo_id(article),
+            is_fork=bool(re.search(r"\bforked from\b", article, re.I)),
+        ))
     return hits
 
 
@@ -115,11 +169,35 @@ def merge_hits(hits: list[TrendingHit]) -> list[TrendingHit]:
     return [best[k] for k in order]
 
 
-def _fetch_html(client: httpx.Client, period: str, retries: int, sleep) -> str:
+def prefer_gain(current: tuple | None, gain: int, period: str) -> tuple:
+    """Keep the longer window (weekly over daily). Same window keeps the larger gain."""
+    proposed = (int(gain), period)
+    if current is None:
+        return proposed
+    rank = _PERIOD_RANK.get(period, 0)
+    prev = _PERIOD_RANK.get(current[1], 0)
+    if rank > prev or (rank == prev and proposed[0] > current[0]):
+        return proposed
+    return current
+
+
+def _language_slug(language: str) -> str:
+    slug = (language or "").strip().lower()
+    if _LANG_SLUG.fullmatch(slug):
+        return slug
+    return ""
+
+
+def _fetch_html(client: httpx.Client, period: str, retries: int, sleep,
+                language: str = "") -> str:
     last_status = None
+    url = _PAGE
+    slug = _language_slug(language)
+    if slug:
+        url = f"{_PAGE}/{slug}"
     for attempt in range(retries):
         try:
-            resp = client.get(_PAGE, params={"since": period}, headers=_HEADERS)
+            resp = client.get(url, params={"since": period}, headers=_HEADERS)
         except httpx.HTTPError:
             if attempt < retries - 1:
                 sleep(float(2 ** attempt))
@@ -138,23 +216,32 @@ def _fetch_html(client: httpx.Client, period: str, retries: int, sleep) -> str:
 
 
 def collect_trending(periods, client: httpx.Client | None = None, retries: int = 3,
-                     sleep=time.sleep) -> list[TrendingHit]:
+                     sleep=time.sleep, languages=()) -> list[TrendingHit]:
     """Fetch and parse each window. A failed window is skipped; the other
-    still counts. Never raises — the caller keeps the search pool."""
+    still counts. ``languages`` adds ``/trending/{language}`` for those same
+    windows (a theme's ``language:`` qualifier). Never raises — the caller
+    keeps the search pool."""
     if not periods:
         return []
     owns_client = client is None
     client = client or httpx.Client(timeout=30, follow_redirects=True)
+    pages = [(period, "") for period in periods]
+    for period in periods:
+        for language in languages or ():
+            if _language_slug(language):
+                pages.append((period, language))
     hits: list[TrendingHit] = []
     try:
-        for period in periods:
-            html = _fetch_html(client, period, retries=retries, sleep=sleep)
+        for period, language in pages:
+            html = _fetch_html(client, period, retries=retries, sleep=sleep,
+                               language=language)
+            label = f"{language} {period}".strip() if language else period
             if not html:
-                log.warning("github trending %s fetch failed", period)
+                log.warning("github trending %s fetch failed", label)
                 continue
             found = parse_trending_html(html)
             if not found:
-                log.warning("github trending %s parsed 0 repos", period)
+                log.warning("github trending %s parsed 0 repos", label)
             hits.extend(found)
     finally:
         if owns_client:
