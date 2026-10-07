@@ -16,6 +16,30 @@ _ARR_RE = re.compile(r"\[.*\]", re.S)
 # One sentence, about this long. The formatter applies the same cap to
 # fallback descriptions so a post cannot grow back to a two-sentence wall.
 BLURB_CHAR_LIMIT = 160
+# The writer is asked to finish under this, short of the hard cap, so a
+# sentence can end before anything has to be cut.
+BLURB_PROMPT_LIMIT = 150
+# A cut shorter than this is a fragment. Callers then try the repo's own
+# description (trimmed the same way) and otherwise omit the blurb.
+BLURB_MIN_CHARS = 40
+# Post #389 shipped unfinished blurbs of 153 and 156 characters
+# ("…session viewing", "…sandboxed"). An unfinished blurb this close to the
+# cap was stopped by the limit, same as one that ran past it.
+_UNFINISHED_CLOSE_AT = BLURB_CHAR_LIMIT - 20
+
+# Never leave a blurb on one of these. They are the tail of a phrase that
+# was cut off ("with sandboxed", "and session").
+_DANGLING_WORDS = frozenset({
+    "a", "an", "the", "of", "with", "to", "for", "and", "or", "by",
+    "in", "on", "from", "via", "using",
+})
+# Clause boundary inside the cap: comma, semicolon, a spaced dash, or one
+# of the clause words. A hyphen inside "Apache-2.0" or "harness-portable"
+# is not a boundary.
+_CLAUSE_RE = re.compile(
+    r",|;|—|–| - |\s+(?:and|with|that|which)\b",
+    re.I,
+)
 
 _NOTABLE_RE = re.compile(r"\b(?:notabl\w*|stands\s+out)\b", re.I)
 _JUDGMENT_RE = re.compile(
@@ -147,28 +171,150 @@ def _first_sentence(text: str) -> str:
     return match.group(0).strip() if match else text
 
 
-def _clip(text: str, limit: int) -> str | None:
+def _normalize_blurb(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    # A trailing ellipsis is a cut, not a sentence end.
+    return re.sub(r"(?:\.\.\.|…)+\s*$", "", text).rstrip()
+
+
+def _is_finished(text: str) -> bool:
+    return bool(re.search(r"[.?!]$", text))
+
+
+def _last_word(text: str) -> str:
+    core = re.sub(r"[.?!]+$", "", text).strip()
+    if not core:
+        return ""
+    return core.split()[-1].strip(".,;:!?").lower()
+
+
+def _ends_dangling(text: str) -> bool:
+    return _last_word(text) in _DANGLING_WORDS
+
+
+def _strip_dangling(text: str) -> str:
+    core = re.sub(r"[.?!]+$", "", text).strip()
+    words = core.split()
+    while words and words[-1].strip(".,;:!?").lower() in _DANGLING_WORDS:
+        words.pop()
+    return " ".join(words)
+
+
+def _fit_window(text: str, limit: int) -> str:
+    """The prefix that must fit, without ending in the middle of a word."""
     if len(text) <= limit:
         return text
     window = text[:limit]
-    # A comma is a clause boundary, so the cut still reads as a finished phrase.
-    comma = window.rfind(",")
-    if comma >= 80:
-        return window[:comma].rstrip()
-    cut = window.rsplit(" ", 1)[0] if " " in window else window
-    cut = cut.rstrip(" ,;:-")
-    if len(cut) < 40:
+    nxt = text[limit]
+    if window and not window[-1].isspace() and not nxt.isspace():
+        space = window.rfind(" ")
+        if space > 0:
+            window = window[:space]
+    return window.rstrip()
+
+
+def _last_sentence_in(window: str) -> str | None:
+    last = None
+    for match in re.finditer(r"[.?](?=\s|$)", window):
+        # "..." is an ellipsis, and "v1.2" never matches (the dot is followed
+        # by a digit). "22. It" does.
+        if window[match.start()] == "." and match.start() >= 1 and window[match.start() - 1] == ".":
+            continue
+        candidate = window[:match.end()].rstrip()
+        if candidate.endswith("...") or candidate.endswith("…"):
+            continue
+        last = candidate
+    return last
+
+
+# Words after the last comma / "with" / "and". Shorter than this, the tail is
+# the writer running out of room ("sandboxed", "session viewing").
+_REMNANT_WORDS = 3
+
+
+def _last_clause(window: str) -> tuple[str, str] | None:
+    """Prefix before the last clause boundary, and the tail after it."""
+    best = None
+    for match in _CLAUSE_RE.finditer(window):
+        if match.start() > 0:
+            best = match
+    if best is None:
+        return None
+    prefix = window[:best.start()].rstrip()
+    if not prefix:
+        return None
+    return prefix, window[best.end():].strip()
+
+
+def _close(prefix: str, limit: int) -> str | None:
+    """Drop a dangling tail and end on a period, inside the cap.
+
+    None when that would be under ``BLURB_MIN_CHARS``: a fragment, which the
+    caller replaces with the repo description or leaves blank.
+    """
+    cut = _strip_dangling(prefix)
+    cut = re.sub(r"[\s,;:]+$", "", cut).rstrip()
+    if not cut:
+        return None
+    if not _is_finished(cut):
+        while cut and len(cut) + 1 > limit:
+            if " " not in cut:
+                cut = cut[:limit - 1].rstrip()
+                break
+            cut = _strip_dangling(cut.rsplit(" ", 1)[0])
+            cut = re.sub(r"[\s,;:]+$", "", cut).rstrip()
+        if cut and not _is_finished(cut):
+            cut += "."
+    if (not cut or len(cut) < BLURB_MIN_CHARS or len(cut) > limit
+            or _ends_dangling(cut) or cut.endswith("...") or cut.endswith("…")):
         return None
     return cut
+
+
+def _close_within(text: str, limit: int) -> str | None:
+    window = _fit_window(text, limit)
+    sentence = _last_sentence_in(window)
+    if (sentence and BLURB_MIN_CHARS <= len(sentence) <= limit
+            and not _ends_dangling(sentence)):
+        return sentence
+    clause = _last_clause(window)
+    if clause is not None:
+        prefix, tail = clause
+        # Past the cap, the rest does not fit. Under the cap, only a short
+        # tail is a remnant; a real final clause stays and just gains a period.
+        if len(text) > limit or len(tail.split()) <= _REMNANT_WORDS:
+            return _close(prefix, limit)
+    return _close(window, limit)
+
+
+def _clip(text: str, limit: int) -> str | None:
+    text = _normalize_blurb(text)
+    if not text:
+        return None
+    if len(text) <= limit and _is_finished(text) and not _ends_dangling(text):
+        return text
+    # Over the cap, or unfinished and close enough that the writer stopped
+    # mid-phrase to stay under it. Either way, end on a sentence or clause.
+    if len(text) > limit or (not _is_finished(text) and len(text) >= _UNFINISHED_CLOSE_AT):
+        return _close_within(text, limit)
+    if not _is_finished(text) and _ends_dangling(text):
+        text = _strip_dangling(text)
+        if len(text) < BLURB_MIN_CHARS:
+            return None
+        return text if _is_finished(text) else text + "."
+    return text
 
 
 def prepare_public_blurb(text: str, repo) -> str | None:
     """One public sentence, or None when the text should not be posted.
 
-    None means: notable/stands-out, a curator judgment, or a language or
-    license that contradicts the repo. Callers fall back to the repo's own
-    description, then the README line. A clean sentence longer than
-    ``BLURB_CHAR_LIMIT`` is cut on a word boundary.
+    None means: notable/stands-out, a curator judgment, a language or
+    license that contradicts the repo, or a cut that would be a fragment
+    under ``BLURB_MIN_CHARS``. Callers fall back to the repo's own
+    description, then the README line, and omit the blurb when every source
+    fails. A sentence longer than ``BLURB_CHAR_LIMIT`` — or an unfinished one
+    pushed up against that cap — is closed on the last sentence or clause
+    inside the limit, with a period, never on a dangling word.
     """
     text = _strip_slug_opener((text or "").strip(), repo)
     if not text:
@@ -206,11 +352,15 @@ def make_summaries(repos, excerpts=None, whys=None, host: str = "", model: str =
         for i, (r, ex) in enumerate(zip(repos, excerpts))
     )
     prompt = (
-        "For each GitHub repository below, write ONE factual sentence of at most "
-        f"{BLURB_CHAR_LIMIT} characters in plain English: what it does, and why a "
-        "developer would look at it now. Use only the description and README excerpt.\n"
+        "For each GitHub repository below, write ONE complete factual sentence of "
+        f"at most {BLURB_PROMPT_LIMIT} characters in plain English: what it does, "
+        "and why a developer would look at it now. Use only the description and "
+        "README excerpt.\n"
         "Rules:\n"
-        "- One sentence. Do not add a second sentence.\n"
+        "- One complete sentence that ends with a period. Stay under "
+        f"{BLURB_PROMPT_LIMIT} characters so the sentence finishes; do not stop "
+        "mid-phrase.\n"
+        "- Do not add a second sentence.\n"
         "- Do not use the word \"notable\" or the phrase \"stands out\".\n"
         "- Do not start with the owner/repo slug.\n"
         "- The parenthetical facts (language, stars, license) are authoritative. "
