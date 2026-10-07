@@ -3,6 +3,7 @@ import httpx
 from bot.github import Repo
 from bot.trending import (
     TrendingHit, collect_trending, merge_hits, merge_trending, parse_trending_html,
+    prefer_gain,
 )
 
 # Mirrors github.com/trending as of 2026-10-04: the repo link lives in <h2>,
@@ -138,3 +139,44 @@ def test_merge_trending_matches_hydration_when_the_api_renames_case():
     merged, gains = merge_trending([], hits, ["nvidia/openshell"], [repo])
     assert [r.full_name for r in merged] == ["NVIDIA/OpenShell"]
     assert gains[3] == (5900, "weekly")
+
+
+def test_parse_trending_html_reads_id_description_language_and_skips_forks_marker():
+    from pathlib import Path
+    html = (Path(__file__).parent / "fixtures" / "trending_daily_excerpt.html").read_text()
+    hits = parse_trending_html(html)
+    assert [(h.full_name, h.gained, h.stars, h.language, h.repo_id) for h in hits] == [
+        ("morluto/rea", 4666, 12800, "TypeScript", 1209966933),
+        ("boykopovar/AnyPS5", 2725, 9025, "C++", 1322250666),
+        ("mattpocock/skills", 1406, 279116, "Shell", 1148788086),
+    ]
+    assert hits[0].description.startswith("Reverse engineer anything")
+    assert hits[0].is_fork is False
+    fork = parse_trending_html(
+        '<article><h2><a href="/someone/forked-demo">x</a></h2>'
+        "<p>forked from acme/demo</p><span>10 stars today</span></article>"
+    )
+    assert fork[0].is_fork is True
+
+
+def test_prefer_gain_keeps_weekly_over_a_smaller_daily_count():
+    assert prefer_gain(None, 3293, "daily") == (3293, "daily")
+    assert prefer_gain((3293, "daily"), 14507, "weekly") == (14507, "weekly")
+    assert prefer_gain((14507, "weekly"), 3293, "daily") == (14507, "weekly")
+
+
+def test_collect_trending_requests_language_page_and_keeps_global_when_it_fails():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        url = str(request.url)
+        if "/trending/zig" in url:
+            return httpx.Response(404, text="missing")
+        return httpx.Response(200, text=_DAILY)
+
+    hits = collect_trending(("daily",), languages=("Zig",), client=_client(handler),
+                            retries=1, sleep=lambda _s: None)
+    assert any(h.full_name == "thedotmack/claude-mem" for h in hits)
+    assert any("/trending/zig" in url and "since=daily" in url for url in seen)
+    assert any(url.split("?")[0].endswith("/trending") for url in seen)

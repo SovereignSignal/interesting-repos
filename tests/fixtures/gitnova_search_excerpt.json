@@ -1,0 +1,33 @@
+{
+  "query": "",
+  "total": 2,
+  "results": [
+    {
+      "full_name": "morluto/rea",
+      "magnitude": 9.3,
+      "stage": "breakout",
+      "summary": "A reverse-engineering tool that lets AI agents inspect apps and native binaries: it connects agents to Hopper or Ghidra via MCP and CLI, helping explain how a feature works and rebuild it in your own project.",
+      "category": "ai_agents",
+      "language": "TypeScript",
+      "stars": 12633,
+      "age_days": 176,
+      "trust": "ok",
+      "stars_today_so_far": 3293,
+      "github": "https://github.com/morluto/rea"
+    },
+    {
+      "full_name": "feder-cr/invisible_dots",
+      "magnitude": 6.5,
+      "stage": "breakout",
+      "summary": "Open-source web AI agent with its own patched Firefox browser that avoids detection and blocking.",
+      "category": "ai_agents",
+      "language": "TypeScript",
+      "stars": 31789,
+      "age_days": 794,
+      "trust": "doubt",
+      "trust_label": "unusual star pattern (heuristic)",
+      "stars_today_so_far": 29155,
+      "github": "https://github.com/feder-cr/invisible_dots"
+    }
+  ]
+}

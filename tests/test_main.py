@@ -1071,6 +1071,214 @@ def test_run_star_ceiling_rewrites_pushed_query_and_drops_old_giants(tmp_path, m
     assert "hypit" in body and "xls" in body
 
 
+def _opt_in_external(monkeypatch, trending=(), gitnova=()):
+    monkeypatch.setattr(main, "EXTRA_SOURCES", True)
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(trending))
+    monkeypatch.setattr(main, "collect_gitnova", lambda *a, **k: (list(gitnova), "ok", ""))
+
+
+def test_run_page_trending_posts_without_a_trust_label(tmp_path, monkeypatch, capsys):
+    """Movers keeps its growth line. The Oct 7 Trending row is page data; a
+    failed enrich does not drop it, and no star-trust wording is copied in."""
+    from pathlib import Path
+    from bot.ranker import Pick
+    from bot.trending import parse_trending_html
+    html = (Path(__file__).parent / "fixtures" / "trending_daily_excerpt.html").read_text()
+    hits = parse_trending_html(html)
+    fetched = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos",
+                        lambda names, **k: fetched.extend(names) or [None] * len(names))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank",
+                        lambda repos, theme, **k: [Pick(r) for r in repos[:theme.count]])
+    theme = Theme(key="movers", name="This Week's Movers", emoji="🚀", query="q",
+                  count=1, delta_days=7, github_trending=("daily", "weekly"), rank="llm")
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13), dry_run=True)
+    body = capsys.readouterr().out
+    assert failures == 0
+    assert "🚀 <b>This Week&#x27;s Movers</b>" in body
+    assert "rea</b>" in body
+    assert "⭐ 12,800" in body
+    assert "+4.7k★ today" in body
+    assert "TypeScript" in body
+    assert "morluto/rea" in body
+    assert "Reverse engineer anything with agents" in body
+    lowered = body.lower()
+    for banned in ("inflated", "unusual", "organic", "breakout", "magnitude", "gitnova", "notable"):
+        assert banned not in lowered
+    # The row already has a GitHub id, so a failed enrich still leaves the post.
+    assert fetched and len(fetched) <= main.HYDRATE_LIMIT
+
+
+def test_run_hydrate_budget_skips_idless_rows_past_the_cap(tmp_path, monkeypatch):
+    from bot.ranker import Pick
+    from bot.trending import TrendingHit
+    hits = [TrendingHit(f"acme/r{i}", 100 - i, "daily") for i in range(10)]
+    fetched = []
+
+    def fetch(names, **k):
+        fetched.extend(list(names))
+        return [
+            Repo(1000 + n, name, f"https://github.com/{name}", "a tool", 50,
+                 "Go", [], False, False, created_at="2026-01-01T00:00:00Z",
+                 pushed_at="2026-06-01T00:00:00Z")
+            for n, name in enumerate(names)
+        ]
+
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="🚀", query="q", count=10,
+                  delta_days=7, github_trending=("daily",))
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert fetched == [f"acme/r{i}" for i in range(main.HYDRATE_LIMIT)]
+    body = "\n".join(sent)
+    assert "acme/r0" in body and "acme/r7" in body
+    assert "acme/r8" not in body and "acme/r9" not in body
+
+
+def test_run_ninth_page_stub_is_not_fetched_and_still_posts(tmp_path, monkeypatch):
+    from bot.ranker import Pick
+    from bot.trending import TrendingHit
+    hits = [
+        TrendingHit(f"acme/s{i}", 100 - i, "weekly", stars=1000 + i, repo_id=5000 + i,
+                    description="a real tool", language="Go")
+        for i in range(9)
+    ]
+    fetched = []
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos",
+                        lambda names, **k: fetched.extend(list(names)) or [None] * len(names))
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="🚀", query="q", count=9,
+                  delta_days=7, github_trending=("weekly",))
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert len(fetched) == main.HYDRATE_LIMIT
+    assert "acme/s8" not in fetched
+    body = "\n".join(sent)
+    assert "acme/s8" in body
+    assert "+1.0k★ this week" in body or "+100★ this week" in body
+
+
+def test_run_drops_likely_inflated_and_keeps_unusual(tmp_path, monkeypatch):
+    from bot.gitnova import GitNovaHit
+    from bot.ranker import Pick
+    farm = Repo(5, "farm/stars", "https://github.com/farm/stars", "a dump", 9000, "Py", [], False, False)
+    good = Repo(6, "acme/tool", "https://github.com/acme/tool", "a compiler", 80, "Rust", [], False, False)
+    unusual = GitNovaHit(
+        "feder-cr/invisible_dots", summary="A browser agent. unusual star pattern (heuristic)",
+        category="ai_agents", language="TypeScript", stars=1000, stars_today=400,
+        stage="breakout", trust="doubt", trust_label="unusual star pattern (heuristic)",
+    )
+    inflated = GitNovaHit("farm/stars", trust="inflated", stars_today=8000, stage="breakout",
+                          summary="likely inflated")
+    fetched = []
+
+    def fetch(names, **k):
+        fetched.extend(list(names))
+        return [Repo(9, "feder-cr/invisible_dots", "https://github.com/feder-cr/invisible_dots",
+                     "Open-source web AI agent with its own patched Firefox browser.",
+                     31789, "TypeScript", [], False, False,
+                     created_at="2024-08-04T00:00:00Z", pushed_at="2026-06-01T00:00:00Z")]
+
+    sent = []
+    _opt_in_external(monkeypatch, gitnova=[unusual, inflated])
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [farm, good])
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="ai-agents", name="AI & Agents", emoji="🤖",
+                  query="topic:ai-agents created:>{since:90d}", count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    body = "\n".join(sent).lower()
+    assert "farm/stars" not in body
+    assert "acme/tool" in body
+    assert "invisible_dots" in body
+    assert "unusual" not in body and "inflated" not in body and "gitnova" not in body
+    assert "farm/stars" not in fetched
+
+
+def test_run_gitnova_outage_keeps_search_and_logs_source_health(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    sent = []
+    _opt_in_external(monkeypatch)
+    monkeypatch.setattr(main, "collect_gitnova", lambda *a, **k: ([], "error", "timed out"))
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 40)])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="web", name="Web", emoji="", query="topic:frontend", count=3)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 4))
+    assert failures == 0 and sent and "a/1" in sent[0]
+    assert "source_health source=gitnova status=error items=0 error=timed out" in caplog.text
+    assert "source_health source=github_trending status=empty items=0" in caplog.text
+
+
+def test_run_star_ceiling_still_applies_to_gitnova(tmp_path, monkeypatch):
+    from bot.gitnova import GitNovaHit
+    from bot.ranker import Pick
+    young = GitNovaHit("acme/zigc", summary="A zig compiler.", category="", language="Zig",
+                       stars=9000, stars_today=200, stage="breakout", age_days=20, trust="ok")
+    old = GitNovaHit("acme/ancient", summary="An old zig compiler.", language="Zig",
+                     stars=9000, stars_today=50, stage="breakout", age_days=2000, trust="ok")
+    fetched = []
+
+    def fetch(names, **k):
+        fetched.extend(list(names))
+        assert "acme/ancient" not in [n.lower() for n in names]
+        return [Repo(3, "acme/zigc", "https://github.com/acme/zigc", "A zig compiler.",
+                     9000, "Zig", [], False, False, created_at="2026-09-01T00:00:00Z",
+                     pushed_at="2026-10-01T00:00:00Z")]
+
+    sent = []
+    _opt_in_external(monkeypatch, gitnova=[young, old])
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(
+        key="systems", name="Systems", emoji="",
+        query=("language:Zig created:>{since:180d}", "topic:compiler created:>{since:180d}"),
+        count=5, max_stars=5000, max_stars_exempt_days=180,
+    )
+    # 2026-10-07 is a Wednesday; at is unset so the theme runs.
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 10, 7, 19))
+    body = "\n".join(sent)
+    assert "zigc" in body and "ancient" not in body
+    assert fetched == ["acme/zigc"]
+
+
+def test_run_extra_trending_uses_theme_language(tmp_path, monkeypatch):
+    seen = {}
+
+    def collect(periods, languages=(), **k):
+        seen["periods"] = tuple(periods)
+        seen["languages"] = tuple(languages)
+        return []
+
+    monkeypatch.setattr(main, "EXTRA_SOURCES", True)
+    monkeypatch.setattr(main, "collect_trending", collect)
+    monkeypatch.setattr(main, "collect_gitnova", lambda *a, **k: ([], "ok", ""))
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    theme = Theme(key="systems", name="Systems", emoji="",
+                  query="language:Zig created:>{since:180d}", count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 10, 7, 19))
+    assert seen["periods"] == ("daily", "weekly")
+    assert seen["languages"] == ("Zig",)
+
+
 def test_run_star_ceiling_with_only_giants_is_a_quiet_slot(tmp_path, monkeypatch, caplog):
     caplog.set_level("INFO")
     old = Repo(1, "vercel/next.js", "u", "d", 142993, "JavaScript", [], False, False,

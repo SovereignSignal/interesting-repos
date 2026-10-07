@@ -5,8 +5,9 @@ Push-only: a script run by Railway cron four times daily. No server.
 
 ## How it works
 Discover (GitHub Search API "breakout" queries: recently-created, high-star; a theme
-may merge several queries) → pre-filter (deterministic spam/stale/agent-skill-cap
-drops) → curate (for `rank=llm` themes an Ollama model **scores every candidate 0–10**
+may merge several queries; GitHub Trending HTML and GitNova are extra candidate
+pools on the same filters) → pre-filter (deterministic spam/stale/agent-skill-cap
+drops, plus a GitNova "likely inflated" star-trust drop) → curate (for `rank=llm` themes an Ollama model **scores every candidate 0–10**
 against the theme's `profile` and writes a one-line "why"; code keeps only scores at or
 above `min_score`, so a thin pool posts fewer repos — or none — rather than padding;
 else top-by-stars) → title (the repo's own name, or a README H1 only when it is

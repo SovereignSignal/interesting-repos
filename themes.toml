@@ -12,13 +12,17 @@
 # profile: what "interesting" means for this theme; guides the LLM curator.
 # delta_days: set (e.g. 7) to source candidates by N-day star growth instead of
 #             leaving them in search-stars order — repos with no prior snapshot
-#             are dropped, unless github_trending measured a gain for them
-#             (the weekly Movers digest uses this). Optional.
+#             are dropped, unless github_trending or GitNova measured a gain
+#             for them (the weekly Movers digest uses this). Optional.
 # github_trending: optional list of GitHub Trending windows ("daily", "weekly",
 #             "monthly"). Those pages are merged into the search pool with no
 #             created: age gate. On a delta theme the sort key is the STATE_DIR
 #             snapshot diff when a baseline exists, otherwise the page's
-#             "N stars today/this week". Only Movers opts in.
+#             "N stars today/this week". Only Movers opts in. Every scheduled
+#             theme also receives GitNova (ai_agents, llm, gen_media, devtools)
+#             and Trending rows that match its language: or topic:; that routing
+#             is code, not a per-theme key. A "likely inflated" GitNova label
+#             drops the repo. No new env var.
 # max_stars: optional star ceiling. Repos above it are dropped, except those
 #             created within max_stars_exempt_days (a young breakout can be
 #             large). On queries that use pushed: (no created: age gate) the
