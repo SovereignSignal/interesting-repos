@@ -233,6 +233,51 @@ def fetch_repos(full_names: list[str], token: str = "",
             client.close()
 
 
+_H1_MD = re.compile(r"(?m)^#(?!#)\s+(.+?)\s*$")
+_H1_HTML = re.compile(r"(?is)<h1\b[^>]*>(.*?)</h1>")
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_HTML_TAG = re.compile(r"<[^>]+>")
+_EMOJI = re.compile(
+    "[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF"
+    "\U00002600-\U000027BF\uFE0F\u200D]+"
+)
+
+
+def _clean_heading(raw: str) -> str:
+    s = _MD_IMAGE.sub("", raw)
+    s = _MD_LINK.sub(r"\1", s)
+    s = _HTML_TAG.sub(" ", s)
+    s = s.replace("**", "").replace("__", "").replace("`", "")
+    s = _EMOJI.sub("", s)
+    return re.sub(r"\s+", " ", s).strip(" \t#")
+
+
+def h1_from(text: str) -> str:
+    """First level-1 heading (markdown ``#`` or ``<h1>``), as plain text.
+
+    The earlier of the two wins. ``##`` sections and badge images are not
+    headings. "" when the README has no usable H1.
+    """
+    if not text:
+        return ""
+    found = []
+    md = _H1_MD.search(text)
+    if md:
+        cleaned = _clean_heading(md.group(1))
+        if cleaned:
+            found.append((md.start(), cleaned))
+    html = _H1_HTML.search(text)
+    if html:
+        cleaned = _clean_heading(html.group(1))
+        if cleaned:
+            found.append((html.start(), cleaned))
+    if not found:
+        return ""
+    found.sort()
+    return found[0][1]
+
+
 def _is_noise(line: str) -> bool:
     s = line.strip()
     if not s:
@@ -301,7 +346,11 @@ def readme_excerpt(full_name: str, token: str = "",
 
 def readme_parts(full_name: str, token: str = "",
                  client: httpx.Client | None = None,
-                 max_chars: int = 600) -> tuple[str, str]:
-    """(first_line, excerpt) from a single README fetch."""
+                 max_chars: int = 600) -> tuple[str, str, str]:
+    """(first_line, excerpt, h1) from a single README fetch.
+
+    ``h1`` is the level-1 heading (possibly ""), used as a title only when it
+    is clearly the project name. ``first_line`` still skips headings.
+    """
     raw = _readme_raw(full_name, token=token, client=client)
-    return first_line_from(raw), excerpt_from(raw, max_chars=max_chars)
+    return first_line_from(raw), excerpt_from(raw, max_chars=max_chars), h1_from(raw)

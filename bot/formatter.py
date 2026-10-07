@@ -1,5 +1,7 @@
 from html import escape
 
+from bot.summaries import prepare_public_blurb
+
 TELEGRAM_LIMIT = 4096
 
 
@@ -26,9 +28,36 @@ def _format_momentum(v) -> str | None:
     return f"{round(v):,}★/day"
 
 
+def _public_desc(repo, summary, describe, translate) -> str:
+    """The blurb that ships. A rejected summary falls back to the repo's own
+    description, then the README line. Empty when every source contradicts
+    the metadata or is only a curator judgment."""
+    texts = []
+    if summary:
+        texts.append(summary)
+    own = repo.description or ""
+    if own:
+        texts.append(translate(own))
+    else:
+        line = describe(repo) or ""
+        if line:
+            texts.append(translate(line))
+    for text in texts:
+        cleaned = prepare_public_blurb(text, repo)
+        if cleaned:
+            return cleaned
+    if summary and own:
+        line = describe(repo) or ""
+        if line and line != own:
+            cleaned = prepare_public_blurb(translate(line), repo)
+            if cleaned:
+                return cleaned
+    return ""
+
+
 def _entry(repo, title, summary, describe, translate, delta=None, momentum=None,
            delta_period: str = "weekly") -> str:
-    desc = summary or translate(repo.description or describe(repo) or "")
+    desc = _public_desc(repo, summary, describe, translate)
     heading = f'<a href="{repo.html_url}"><b>{escape(title)}</b></a>'
     meta = f"⭐ {repo.stars:,}"
     pace = _format_momentum(momentum)

@@ -179,6 +179,29 @@ def test_cap_ai_n_keeps_non_ai_and_at_most_n_ai():
     assert out == [a1, tool, a2]   # two AI + the non-AI; a3 dropped
 
 
+def test_cap_stars_drops_old_giants_and_keeps_young_breakouts():
+    from bot.filters import cap_stars
+    today = date(2026, 10, 7)
+    old = _repo(full_name="vercel/next.js", stars=142993, created_at="2016-10-01T00:00:00Z")
+    young = _repo(full_name="hypit-ai/hypit", stars=19941, created_at="2026-07-29T00:00:00Z")
+    small = _repo(full_name="google/xls", stars=1937, created_at="2020-05-07T00:00:00Z")
+    undated = _repo(full_name="a/mystery", stars=9000, created_at="")
+    out = cap_stars([old, young, small, undated], 5000, 180, today)
+    assert [r.full_name for r in out] == ["hypit-ai/hypit", "google/xls"]
+
+
+def test_cap_stars_none_is_passthrough():
+    from bot.filters import cap_stars
+    repos = [_repo(stars=100000)]
+    assert cap_stars(repos, None, 180, date(2026, 10, 7)) == repos
+
+
+def test_cap_stars_without_exemption_drops_every_age():
+    from bot.filters import cap_stars
+    young = _repo(stars=9000, created_at="2026-09-01T00:00:00Z")
+    assert cap_stars([young], 5000, None, date(2026, 10, 7)) == []
+
+
 def test_cap_agent_skills_n_limits_packs_keeps_tools():
     p1 = _repo(full_name="a/one-skills", description="skills for agents")
     tool = _repo(full_name="b/nemo", topics=["ai-agents"], description="run agents")  # AI tool, not a pack

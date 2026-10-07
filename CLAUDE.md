@@ -17,11 +17,11 @@ One cron run = one UTC hour. `run(config, now, dry_run)` does two phases:
 Trending sweeps the remainder):
 1. Skip the theme unless `(now.weekday(), now.hour)` is in `theme.at` (`at=None` ⇒ always run).
 2. `search_repos` per query — a theme's `query` may be a **list**; results merge, dedupe by id, re-sort by stars. A theme with `github_trending` (Movers: daily + weekly) also merges `github.com/trending` for those windows, hydrated with `GET /repos/{owner}/{repo}`. That list has no `created:` age gate.
-3. Drop forks/archived → on a `delta_days` theme, order by snapshot star growth (or, with no baseline, by the Trending page's period gain) → `clean()` (keyword-stuffed, awesome-lists, stale > `max_idle_days`) → `unsent()` (state) → drop already-`claimed` (cross-theme) → drop `_posted` (global cooling-off; Movers exempt) → empty-metadata README check when `cap=0` → `cap_agent_skills()` → `cap_ai()` → cap at `CANDIDATE_LIMIT` (30). Themes with `ai_cap` set fetch Search page 2 (`per_page=100`).
+3. Drop forks/archived → on a `delta_days` theme, order by snapshot star growth (or, with no baseline, by the Trending page's period gain) → `clean()` (keyword-stuffed, awesome-lists, stale > `max_idle_days`) → `unsent()` (state) → drop already-`claimed` (cross-theme) → drop `_posted` (global cooling-off; Movers exempt) → empty-metadata README check when `cap=0` → `cap_agent_skills()` → `cap_ai()` → `cap_stars()` (themes with `max_stars`; young repos inside `max_stars_exempt_days` stay) → cap at `CANDIDATE_LIMIT` (30). Themes with `ai_cap` set fetch Search page 2 (`per_page=100`). A `pushed:` query on a capped theme is rewritten to `stars:N..max_stars` before search, because GitHub does not intersect `stars:>N` with a second `stars:<M`.
 4. `rank()` → `Pick`s; add their ids to `claimed`.
 
 **Phase 2 — deliver** (themes in config/display order):
-- Build `titles` + `summaries` (summaries get the curator's *why* lines), then `build_messages` (splits at the 4096-char Telegram limit).
+- Build `titles` (repo name, or a README H1 only when it is clearly the project name) + `summaries` (one ≤160-character sentence; the curator's *why* is not sent to the model), then `build_messages` (splits at the 4096-char Telegram limit). A blurb that says "notable", leaks a scoring judgment, or names another language or license is dropped and the repo's own description (then the README line) is used.
 - `send_message` (Telegram, primary) then `send_slack_message` (mirror; logs a WARNING on failure, never raises).
 - `save_state` **only after all of a theme's messages send** — a mid-delivery crash re-delivers rather than losing repos.
 
@@ -36,7 +36,7 @@ Trending sweeps the remainder):
   not a failure, theme posts nothing); LLM down/unparseable → `_rank_llm` returns `None` → **stars
   fallback** (Picks with empty whys) so a digest still ships.
 - **Graceful degradation is silent by design, so it must be alarmed.** Every LLM call falls back to ""
-  (stars-sort / `_prettify` titles / raw descriptions / untranslated text). A bad `OLLAMA_API_KEY`
+  (stars-sort / repo-name titles, which are never a model call / raw descriptions / untranslated text). A bad `OLLAMA_API_KEY`
   once degraded prod with no crash and no alert (2026-06-06). `bot/alerts.llm_reachable` now
   pre-flight pings the LLM and DMs an alert. The ping retries a few times with backoff (same
   shape as `telegram.send_message`) so a single transient blip — a one-off 5xx/timeout/429 —
@@ -46,9 +46,9 @@ Trending sweeps the remainder):
   `message.content`, which used to page "base model unavailable" every cron (2026-08-24).
   It pings the curator chain (via `resolve_curator`) **and**, independently, the base via
   `resolve_title_model`. A retired base (the 2026-07-15 `gemma3:12b` retirement) now runs
-  titles on the live curator and fires a heads-up ("ran on {curator}", run not degraded)
-  instead of shipping deterministic titles. Both alerts can fire in one run (dead curator
-  primary + dead base). Titles/translation send `think=False` so Gemma 4 fills `content`.
+  translation on the live curator and fires a heads-up ("ran on {curator}", run not degraded).
+  Titles are the repo name either way. Both alerts can fire in one run (dead curator
+  primary + dead base). Summaries and translation send `think=False` so Gemma 4 fills `content`.
 - **Ollama Cloud catalog vs `-cloud` suffix:** `GET https://ollama.com/api/tags` lists
   `gemma4:31b` (not `gemma4:31b-cloud`). The `-cloud` suffix is the local-daemon offload
   tag (`ollama run gemma4:31b-cloud`). Direct `/api/chat` on ollama.com uses catalog ids.
@@ -60,8 +60,9 @@ Trending sweeps the remainder):
 - **Curator model split + fallback chain:** `alerts.resolve_curator` walks
   `OLLAMA_CURATOR_MODEL` (a comma-list of candidates) at pre-flight, picks the first reachable,
   and appends `OLLAMA_MODEL` (plus aliases) as the final rung; the chosen model drives
-  `rank()` + `make_summaries` while **titles and translation use `resolve_title_model`**
-  (catalog id of `OLLAMA_MODEL`, else `-cloud` sibling, else the live curator). A retired/401
+  `rank()` + `make_summaries` while **translation uses `resolve_title_model`**
+  (catalog id of `OLLAMA_MODEL`, else `-cloud` sibling, else the live curator; the
+  function name is historical, from when titles were a model call). A retired/401
   primary self-heals to the next candidate (heads-up DM, run not degraded); only an all-down
   chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro:0813,gpt-oss:120b`
   with `gemma4:31b` base (predecessors `deepseek-v4-pro` untagged, `deepseek-v3.1:671b`,
@@ -88,7 +89,9 @@ Themes (`themes.toml`, parsed to frozen `Theme`): `key`, `name`, `emoji`, `query
 N ⇒ keep all non-packs + at most N skill *packs*), `ai_cap` (None ⇒ unchanged, 0 ⇒ drop all AI,
 N ⇒ keep all non-AI + at most N AI repos), `min_score` (=6), `delta_days` (snapshot
 star-growth sourcing), `github_trending` (optional `"daily"` / `"weekly"` / `"monthly"`
-windows from github.com/trending; empty ⇒ search only), `at` (list of `"weekday HH"`
+windows from github.com/trending; empty ⇒ search only), `max_stars` (optional ceiling;
+repos above it are dropped, except those created within `max_stars_exempt_days`),
+`at` (list of `"weekday HH"`
 UTC slots). `{since:Nd}` in a query expands to N days ago at run time. Movers is the
 only theme with `github_trending`; its search query is still the young-repo net
 (`created:>{since:120d}`), and the Trending pages are what let an older repo in.
@@ -114,9 +117,9 @@ theme, keep slots unique):
 | `github.py` | `Repo`, `search_repos` (per_page=100, page, Retry-After), `fetch_repos` (core `GET /repos/{owner}/{repo}`, stops before the core budget is spent; does not overwrite the Search rate-limit sample), `readme_first_line`/`readme_excerpt`/`readme_parts` (raises on search error; readmes return "") |
 | `trending.py` | `parse_trending_html` / `collect_trending` (github.com/trending daily/weekly/monthly), `merge_trending`. Page period-gain until a snapshot baseline exists |
 | `ranker.py` | `rank` (3 outcomes), `_rank_llm` scoring prompt, `_parse_scores`, `rank_by_stars`, `Pick` |
-| `filters.py` | `clean`, `cap_agent_skills`, `cap_ai`, `is_agent_skill_pack` (narrow) vs `is_ai_repo` (broad), `star_velocity`/`VELOCITY_CEILING`=2500 |
-| `summaries.py` | `make_summaries` — "what + why" blurbs from desc+README+why; all-None fallback |
-| `titles.py` | `make_titles` — 2–4 word titles, `_prettify` deterministic fallback |
+| `filters.py` | `clean`, `cap_agent_skills`, `cap_ai`, `cap_stars`, `is_agent_skill_pack` (narrow) vs `is_ai_repo` (broad), `star_velocity`/`VELOCITY_CEILING`=2500 |
+| `summaries.py` | `make_summaries` — one ≤160-char sentence from desc+README (curator why is not in the prompt); `prepare_public_blurb` drops notable/judgments/fact clashes |
+| `titles.py` | `make_titles` — repo name, or a README H1 when it is clearly the project name. No model call |
 | `translate.py` | `translate_to_english` — only non-Latin scripts; falls back to original text |
 | `formatter.py` | `build_messages`/`_entry`, `TELEGRAM_LIMIT`=4096, HTML-escapes user text (not the URL) |
 | `telegram.py` | `send_message` — HTML, retries w/ backoff, token-sanitized errors |

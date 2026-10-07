@@ -317,12 +317,59 @@ def test_prod_themes_widen_starved_queries():
     assert themes["crypto"].min_score == 7
     assert all("stars:>10" in q for q in _queries(themes["crypto"]))
 
+    # Star ceiling: themed giants stay out. Movers and Trending are unchanged.
+    for key in ("systems", "data", "web"):
+        assert themes[key].max_stars == 5000, key
+    assert themes["systems"].max_stars_exempt_days == 180
+    assert themes["data"].max_stars_exempt_days == 120
+    assert themes["web"].max_stars_exempt_days == 120
+    assert themes["movers"].max_stars is None and themes["trending"].max_stars is None
+    assert themes["movers"].count == 7
+    for key, theme in themes.items():
+        if key != "movers":
+            assert theme.count == 5, key
+
     for key in ("finance", "systems", "data", "web", "science"):
         assert any("pushed:>{since:30d}" in q for q in _queries(themes[key])), key
 
     for key in ("robotics", "gamedev", "embedded", "privacy", "mobile"):
         assert key in themes
         assert themes[key].ai_cap == 2
+
+
+def test_load_themes_reads_star_ceiling(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text(
+        '[[theme]]\nkey="k"\nname="N"\nquery="q"\n'
+        "max_stars=5000\nmax_stars_exempt_days=180\n")
+    t = load_themes(str(p))[0]
+    assert t.max_stars == 5000 and t.max_stars_exempt_days == 180
+
+
+def test_load_themes_star_ceiling_defaults_to_none(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\n')
+    t = load_themes(str(p))[0]
+    assert t.max_stars is None and t.max_stars_exempt_days is None
+
+
+def test_load_themes_rejects_non_positive_star_ceiling(tmp_path):
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nmax_stars=0\n')
+    with pytest.raises(SystemExit):
+        load_themes(str(p))
+
+
+def test_apply_star_ceiling_rewrites_only_pushed_queries():
+    from bot.config import apply_star_ceiling
+    pushed = "topic:compiler pushed:>2026-09-07 stars:>50"
+    assert apply_star_ceiling(pushed, 5000) == (
+        "topic:compiler pushed:>2026-09-07 stars:51..5000")
+    created = "topic:compiler created:>2026-04-10"
+    assert apply_star_ceiling(created, 5000) == created
+    assert apply_star_ceiling(pushed, None) == pushed
+    bare = "topic:database pushed:>2026-09-07"
+    assert apply_star_ceiling(bare, 5000) == "topic:database pushed:>2026-09-07 stars:<=5000"
 
 
 def test_prod_theme_slots_are_unique():

@@ -9,9 +9,12 @@ may merge several queries) → pre-filter (deterministic spam/stale/agent-skill-
 drops) → curate (for `rank=llm` themes an Ollama model **scores every candidate 0–10**
 against the theme's `profile` and writes a one-line "why"; code keeps only scores at or
 above `min_score`, so a thin pool posts fewer repos — or none — rather than padding;
-else top-by-stars) → summarize (an LLM blurb of *what it is + why it's notable*, with
-the repo's own description / README-first-line as fallback; non-English text translated
-to English) → post one message per theme → remember sent repos so nothing repeats. See
+else top-by-stars) → title (the repo's own name, or a README H1 only when it is
+clearly the project name — never a model-invented title) → summarize (one factual
+sentence, at most 160 characters; the curator's score note is not shown; a blurb
+that contradicts the language or license falls back to the repo's own description
+/ README line; non-English text translated to English) → post one message per theme
+→ remember sent repos so nothing repeats. See
 `docs/superpowers/specs/` and `docs/superpowers/plans/` for the full design.
 
 **Graceful degradation is the core design rule:** every LLM call falls back silently
@@ -26,7 +29,10 @@ qualifier string **or a list of strings** (results merged + deduped by repo id);
 qualifier. `rank = "llm"` has an Ollama model score candidates against the theme's
 `profile`; `min_score` (default 6) is the bar a repo must clear to be posted — raise
 it to be stricter, lower it if a theme runs too sparse. `rank = "stars"` just takes
-the top by stars (no AI). `count` caps the posts. `agent_skill_cap` limits agent-skill
+the top by stars (no AI). `count` caps the posts (5 on themed slots, 7 on Movers).
+`max_stars` is an optional star ceiling so a `pushed:` backfill cannot fill a theme
+with all-time famous repos; repos created within `max_stars_exempt_days` skip it.
+`agent_skill_cap` limits agent-skill
 *packs* (0 = drop all AI repos, used by Trending; N = at most N packs). `ai_cap` limits
 *all* AI repos (0 = drop all AI; N = at most N AI tools, packs or not). LLM curation
 needs `OLLAMA_*` set (below). `at` is a list of `"weekday HH"` slots (e.g.

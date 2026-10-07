@@ -269,10 +269,22 @@ def test_fetch_repos_skips_a_forbidden_repo_that_is_not_rate_limited():
     assert calls == ["/repos/a/secret", "/repos/b/ok"]
 
 
-def test_readme_parts_is_one_fetch_first_line_and_excerpt():
+def test_readme_parts_is_one_fetch_first_line_excerpt_and_h1():
     body = "# Title\n\nThe real first sentence.\nSecond line.\n"
-    first, excerpt = readme_parts("a/b", client=_readme_client(body))
+    first, excerpt, h1 = readme_parts("a/b", client=_readme_client(body))
     assert first == "The real first sentence."
     assert excerpt == "The real first sentence. Second line."
+    assert h1 == "Title"
     assert first_line_from(body) == first
     assert excerpt_from(body) == excerpt
+
+
+def test_h1_from_html_and_markdown():
+    from bot.github import h1_from
+    assert h1_from('<h1 align="center">ROFL</h1>\n\nA chain.\n') == "ROFL"
+    assert h1_from("# e2e\n\nAn end-to-end framework.\n") == "e2e"
+    assert h1_from("## Not the title\n\n# osu!web\n") == "osu!web"
+    assert h1_from("# 🌊 [Lagune AI](https://lagune.ai)\n") == "Lagune AI"
+    # A later markdown H1 does not beat an earlier HTML H1.
+    assert h1_from("<h1>ROFL</h1>\n\n# Other\n") == "ROFL"
+    assert h1_from("no heading here") == ""

@@ -338,18 +338,18 @@ def test_run_no_alert_when_primary_curator_works(tmp_path, monkeypatch):
 
 def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
     # The curator resolved to a non-base model, so resolve_curator never pinged the base
-    # model (OLLAMA_MODEL, drives titles + translation). It's retired. Titles/translation
-    # must run on the live curator (not deterministic fallbacks) and a heads-up DM must
-    # fire; the run is NOT degraded (curation is fine). This is the 2026-07-15 gemma3:12b
+    # model (OLLAMA_MODEL, drives translation). It's retired. Translation must run on
+    # the live curator and a heads-up DM must fire; the run is NOT degraded (curation
+    # is fine). Titles are the repo name either way. This is the 2026-07-15 gemma3:12b
     # retirement. Host is not ollama.com, so no -cloud alias is tried.
-    alerts, titles_model = [], {}
+    alerts, models = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
     monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
-    def fake_titles(repos, model="", **k):
-        titles_model["model"] = model
-        return ["T"]
-    monkeypatch.setattr(main, "make_titles", fake_titles)
+    def fake_translate(text, model="", **k):
+        models["translation"] = model
+        return text
+    monkeypatch.setattr(main, "translate_to_english", fake_translate)
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
@@ -363,7 +363,7 @@ def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
                  ollama_curator_models=("gpt-oss:120b",), alert_chat_id="d")
     failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert failures == 0 and len(alerts) == 1
-    assert titles_model["model"] == "gpt-oss:120b"    # curator, not deterministic
+    assert models["translation"] == "gpt-oss:120b"    # curator, not a dead base
     assert "gemma3:12b" in alerts[0] and "OLLAMA_MODEL" in alerts[0]
     assert "ran on gpt-oss:120b" in alerts[0]
     assert "deterministic" not in alerts[0]
@@ -372,16 +372,16 @@ def test_run_heads_up_alert_when_base_model_unavailable(tmp_path, monkeypatch):
 
 def test_run_no_base_alert_when_cloud_alias_reachable(tmp_path, monkeypatch):
     # Prod leftover: OLLAMA_MODEL=gemma4:31b on ollama.com. The local tag 410s; the
-    # hosted sibling gemma4:31b-cloud is fine. Titles must use the alias and stay silent
+    # hosted sibling gemma4:31b-cloud is fine. Translation must use the alias and stay silent
     # — this is the alert that used to page every cron. Curator is a different model.
     alerts, models = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
     monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
-    def fake_titles(repos, model="", **k):
-        models["titles"] = model
-        return ["T"]
-    monkeypatch.setattr(main, "make_titles", fake_titles)
+    def fake_translate(text, model="", **k):
+        models["translation"] = model
+        return text
+    monkeypatch.setattr(main, "translate_to_english", fake_translate)
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
@@ -395,20 +395,20 @@ def test_run_no_base_alert_when_cloud_alias_reachable(tmp_path, monkeypatch):
                  ollama_curator_models=("deepseek-v4-pro",), alert_chat_id="d")
     main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert alerts == []
-    assert models["titles"] == "gemma4:31b-cloud"
+    assert models["translation"] == "gemma4:31b-cloud"
 
 
 def test_run_heads_up_when_base_and_cloud_alias_dead_uses_curator(tmp_path, monkeypatch):
     # Both the configured tag and its -cloud sibling are gone (true retirement).
-    # Titles run on the curator; a heads-up fires. Not a degraded/stars-only run.
+    # Translation runs on the curator; a heads-up fires. Not a degraded/stars-only run.
     alerts, models = [], {}
     monkeypatch.setattr(main, "search_repos", lambda *a, **k: [_repo(1, 10)])
     monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
     monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", ""))
-    def fake_titles(repos, model="", **k):
-        models["titles"] = model
-        return ["T"]
-    monkeypatch.setattr(main, "make_titles", fake_titles)
+    def fake_translate(text, model="", **k):
+        models["translation"] = model
+        return text
+    monkeypatch.setattr(main, "translate_to_english", fake_translate)
     monkeypatch.setattr(main, "make_summaries", lambda repos, excerpts, **k: [None])
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
@@ -423,7 +423,7 @@ def test_run_heads_up_when_base_and_cloud_alias_dead_uses_curator(tmp_path, monk
                  ollama_curator_models=("deepseek-v4-pro",), alert_chat_id="d")
     failures = main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert failures == 0 and len(alerts) == 1
-    assert models["titles"] == "deepseek-v4-pro"
+    assert models["translation"] == "deepseek-v4-pro"
     assert "ran on deepseek-v4-pro" in alerts[0]
     assert "deterministic" not in alerts[0]
     assert "Ollama unreachable" not in alerts[0]
@@ -485,13 +485,13 @@ def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypat
         models["summaries"] = model
         return [None]
     monkeypatch.setattr(main, "make_summaries", fake_summaries)
-    def fake_titles(repos, model="", **k):
-        models["titles"] = model
-        return ["T"]
-    monkeypatch.setattr(main, "make_titles", fake_titles)
+    def fake_translate(text, model="", **k):
+        models["translation"] = model
+        return text
+    monkeypatch.setattr(main, "translate_to_english", fake_translate)
     monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(main, "send_slack_message", lambda *a, **k: False)
-    # resolved curator routes to rank + summaries; titles/translation stay on the base model
+    # resolved curator routes to rank + summaries; translation stays on the base model
     monkeypatch.setattr(main, "resolve_curator", lambda *a, **k: ("qwen3-next:80b", []))
     monkeypatch.setattr(main, "llm_reachable", lambda *a, **k: True)  # base fine -> no retry backoff
     theme = Theme(key="t", name="T", emoji="", query="q", count=1)
@@ -499,7 +499,7 @@ def test_run_routes_curator_model_to_rank_and_summaries_only(tmp_path, monkeypat
                  ollama_model="gemma3:12b", ollama_curator_models=("qwen3-next:80b",))
     main.run(cfg, now=datetime(2026, 6, 8, 13))
     assert models == {"rank": "qwen3-next:80b", "summaries": "qwen3-next:80b",
-                      "titles": "gemma3:12b"}
+                      "translation": "gemma3:12b"}
 
 
 def test_run_merges_and_dedupes_multi_query_themes(tmp_path, monkeypatch):
@@ -1033,3 +1033,56 @@ def test_run_trending_outage_does_not_alert_on_dry_run(tmp_path, monkeypatch):
                  alert_chat_id="dm")
     failures = main.run(cfg, now=datetime(2026, 6, 8, 13), dry_run=True)
     assert failures == 0 and alerts == []
+
+
+def test_run_star_ceiling_rewrites_pushed_query_and_drops_old_giants(tmp_path, monkeypatch):
+    queries = []
+    old = Repo(1, "vercel/next.js", "https://github.com/vercel/next.js",
+               "The React Framework", 142993, "JavaScript", [], False, False,
+               "2016-10-01T00:00:00Z")
+    young = Repo(2, "hypit-ai/hypit", "https://github.com/hypit-ai/hypit",
+                 "A compiler", 19941, "Rust", [], False, False,
+                 "2026-07-29T00:00:00Z")
+    small = Repo(3, "google/xls", "https://github.com/google/xls",
+                 "Hardware synthesis", 1937, "C++", [], False, False,
+                 "2020-05-07T00:00:00Z")
+
+    def fake_search(query, **k):
+        queries.append(query)
+        return [old, young, small]
+
+    sent = []
+    monkeypatch.setattr(main, "search_repos", fake_search)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(
+        key="systems", name="Systems", emoji="",
+        query=("topic:compiler created:>{since:180d}",
+               "topic:compiler pushed:>{since:30d} stars:>50"),
+        count=5, max_stars=5000, max_stars_exempt_days=180,
+    )
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 10, 7, 19))
+    assert failures == 0
+    assert any(q.endswith("stars:51..5000") for q in queries)
+    assert any("created:>" in q and "stars:" not in q for q in queries)
+    body = "\n".join(sent)
+    assert "next.js" not in body
+    assert "hypit" in body and "xls" in body
+
+
+def test_run_star_ceiling_with_only_giants_is_a_quiet_slot(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
+    old = Repo(1, "vercel/next.js", "u", "d", 142993, "JavaScript", [], False, False,
+               "2016-10-01T00:00:00Z")
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [old])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="systems", name="S", emoji="", query="q", count=5,
+                  max_stars=5000, max_stars_exempt_days=180)
+    failures = main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 10, 7, 19))
+    assert failures == 0 and sent == []
+    assert "no new repos" in caplog.text
+    assert "quality bar" not in caplog.text

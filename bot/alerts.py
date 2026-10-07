@@ -87,7 +87,10 @@ def resolve_curator(host: str, candidates, base_model: str, api_key: str = "",
 def resolve_title_model(host: str, base_model: str, curator_model: str | None,
                         api_key: str = "", client=None, attempts: int = 3,
                         sleep=time.sleep, ping=None) -> tuple[str, str]:
-    """Pick the model for titles + translation.
+    """Pick the model for translation.
+
+    Titles are the repo name and do not use this. The function name is
+    historical (it used to select the title model too).
 
     Walks aliases of `base_model` (catalog id first, then the `-cloud` sibling).
     If those fail and a curator already resolved,
