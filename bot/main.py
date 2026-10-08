@@ -478,7 +478,14 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                          theme.key, len(repos))
             results[theme.key] = picked
             claimed.update(p.repo.id for p in picked)
-            outcomes[theme.key] = ("ok" if picked else "empty", len(picked), "")
+            # Quiet slot: candidates were fetched and scoring parsed, but none
+            # cleared min_score. That is healthy (see ranker.rank). Recording
+            # it as empty made two crypto runs page "source empty for 24h+".
+            # A pool that is actually empty, or a scoring fallback that
+            # produced no picks, stays empty. A selection exception is
+            # "error" below.
+            status = "ok" if picked or (repos and not fallback_reason) else "empty"
+            outcomes[theme.key] = (status, len(picked), "")
         except Exception as exc:
             failures += 1
             log.exception("theme %s failed during selection", theme.key)

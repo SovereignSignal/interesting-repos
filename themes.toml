@@ -78,13 +78,19 @@ profile = "Genuinely useful developer tools, CLIs, terminal apps, editors, and d
 key   = "crypto"
 name  = "Crypto & Web3"
 emoji = "⛓️"
-query = ["topic:web3 created:>{since:120d} stars:>10", "topic:blockchain created:>{since:120d} stars:>10"]
+# One topic per query: GitHub ANDs multiple topic: qualifiers. ai_cap fetches
+# search page 2, so this slot is 5 queries × 2 pages = 10 Search calls.
+query = ["topic:web3 created:>{since:120d} stars:>10",
+         "topic:blockchain created:>{since:120d} stars:>10",
+         "topic:ethereum created:>{since:120d} stars:>10",
+         "topic:defi created:>{since:120d} stars:>10",
+         "topic:zero-knowledge created:>{since:120d} stars:>10"]
 sort  = "stars"
 count = 5
 rank  = "llm"
 agent_skill_cap = 2
 ai_cap = 2
-min_score = 7
+min_score = 6               # same bar as the other themed slots; Movers stays at 7
 at = ["mon 16", "thu 16"]
 profile = "Substantive crypto / web3 / DeFi projects — protocols, infrastructure, SDKs, research, tooling. AGGRESSIVELY exclude pump-and-dump bots, airdrop/scam repos, keyword-stuffed SEO repos (e.g. a name or description that repeats the same words), and low-effort token shills."
 

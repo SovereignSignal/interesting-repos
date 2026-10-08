@@ -442,3 +442,122 @@ def test_run_dry_run_logs_health_without_writing(tmp_path, monkeypatch, caplog):
     assert _status_lines(caplog) == ["source_health source=crypto status=ok items=1"]
     assert "thin_post" not in caplog.text
     assert "rate_limit_remaining=4" in caplog.text
+
+
+def _crypto(count=5, **kwargs):
+    return Theme(key="crypto", name="Crypto", emoji="", query="q", count=count, **kwargs)
+
+
+def _silence_network(monkeypatch, search):
+    monkeypatch.setattr(main, "search_repos", search)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "readme_parts", lambda *a, **k: ("", "", ""))
+
+
+def test_quiet_slot_with_candidates_is_ok_and_does_not_alert(tmp_path, monkeypatch, caplog):
+    """Candidates fetched, none above the bar: healthy. Repeated runs past 24h stay quiet."""
+    caplog.set_level(logging.INFO)
+    alerts = []
+    _silence_network(monkeypatch, lambda *a, **k: [_repo(1, 40), _repo(2, 22)])
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [])
+    monkeypatch.setattr(
+        main, "send_alert", lambda token, chat, text, **k: alerts.append((chat, text)) or True)
+    monkeypatch.setattr(
+        main, "send_message", lambda *a, **k: (_ for _ in ()).throw(AssertionError("digest")))
+    cfg = _cfg(tmp_path, [_crypto(rank="llm", min_score=7)], github_token=TOKEN,
+               alert_chat_id="998877")
+    # Crypto's real gap is Mon 16 → Thu 16, longer than the 24h window.
+    assert main.run(cfg, now=T0) == 0
+    assert main.run(cfg, now=T0 + timedelta(hours=72)) == 0
+    assert alerts == []
+    assert [ln for ln in _status_lines(caplog) if "source=crypto" in ln] == [
+        "source_health source=crypto status=ok items=0",
+        "source_health source=crypto status=ok items=0",
+    ]
+    entry = _health(tmp_path)["crypto"]
+    assert entry["consecutive_empty"] == 0
+    assert entry["consecutive_error"] == 0
+    assert entry["unhealthy_since"] is None
+    assert entry["last_ok"]
+    assert "quality bar" in caplog.text
+
+
+def test_empty_search_stays_empty_and_alerts_after_24h(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    alerts = []
+    _silence_network(monkeypatch, lambda *a, **k: [])
+    monkeypatch.setattr(
+        main, "send_alert", lambda token, chat, text, **k: alerts.append((chat, text)) or True)
+    monkeypatch.setattr(
+        main, "send_message", lambda *a, **k: (_ for _ in ()).throw(AssertionError("digest")))
+    cfg = _cfg(tmp_path, [_crypto()], github_token=TOKEN, alert_chat_id="998877")
+    assert main.run(cfg, now=T0) == 0
+    assert alerts == []
+    assert _health(tmp_path)["crypto"]["consecutive_empty"] == 1
+    assert main.run(cfg, now=T0 + timedelta(hours=24)) == 0
+    assert len(alerts) == 1
+    assert alerts[0][0] == "998877"
+    assert "has been empty for 24h+" in alerts[0][1]
+    assert "consecutive_empty=2" in alerts[0][1]
+    assert [ln for ln in _status_lines(caplog) if "source=crypto" in ln] == [
+        "source_health source=crypto status=empty items=0",
+        "source_health source=crypto status=empty items=0",
+    ]
+
+
+def test_scoring_fallback_and_selection_error_health_unchanged(tmp_path, monkeypatch, caplog):
+    """Stars fallback that posts stays ok. A fallback with no picks, and a
+    search exception, still count as empty/error and still alert."""
+    from bot.ranker import Pick, RankResult
+
+    caplog.set_level(logging.INFO)
+    alerts = []
+    monkeypatch.setattr(
+        main, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+
+    posted = tmp_path / "posted"
+    quiet_fallback = tmp_path / "quiet-fallback"
+    errored = tmp_path / "errored"
+    for path in (posted, quiet_fallback, errored):
+        path.mkdir()
+
+    def rank_with_pick(repos, theme, **k):
+        return RankResult([Pick(repos[0])], fallback_reason="unparseable")
+
+    def rank_with_nothing(repos, theme, **k):
+        return RankResult([], fallback_reason="timeout")
+
+    _silence_network(monkeypatch, lambda *a, **k: [_repo(1, 40), _repo(2, 22)])
+    monkeypatch.setattr(main, "rank", rank_with_pick)
+    theme = _crypto(rank="llm")
+    assert main.run(_cfg(posted, [theme], alert_chat_id="998877"), now=T0) == 0
+    assert _health(posted)["crypto"]["consecutive_empty"] == 0
+    assert _health(posted)["crypto"]["last_ok"]
+
+    monkeypatch.setattr(main, "rank", rank_with_nothing)
+    assert main.run(_cfg(quiet_fallback, [theme], alert_chat_id="998877"), now=T0) == 0
+    assert _health(quiet_fallback)["crypto"]["consecutive_empty"] == 1
+    assert _health(quiet_fallback)["crypto"]["last_ok"] is None
+
+    def boom(*a, **k):
+        raise RuntimeError("search down")
+
+    monkeypatch.setattr(main, "search_repos", boom)
+    err_cfg = _cfg(errored, [theme], alert_chat_id="998877")
+    assert main.run(err_cfg, now=T0) == 1
+    assert _health(errored)["crypto"]["consecutive_error"] == 1
+    assert main.run(err_cfg, now=T0 + timedelta(hours=24)) == 1
+
+    crypto_lines = [ln for ln in _status_lines(caplog) if "source=crypto" in ln]
+    assert crypto_lines == [
+        "source_health source=crypto status=ok items=1",
+        "source_health source=crypto status=empty items=0",
+        "source_health source=crypto status=error items=0 error=search down",
+        "source_health source=crypto status=error items=0 error=search down",
+    ]
+    assert any("LLM scoring failed" in text and "unparseable" in text for text in alerts)
+    assert any("LLM scoring failed" in text and "timeout" in text for text in alerts)
+    assert any("has been erroring for 24h+" in text and "consecutive_error=2" in text
+               for text in alerts)
+    assert not any("has been empty for 24h+" in text for text in alerts)

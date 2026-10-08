@@ -1,6 +1,7 @@
 import pytest
 from datetime import date
 from pathlib import Path
+from bot.candidates import query_topics
 from bot.config import (
     expand_since, load_themes, Theme, load_config, Config, DEFAULT_OLLAMA_MODEL,
 )
@@ -314,8 +315,22 @@ def test_prod_themes_widen_starved_queries():
     for key, theme in themes.items():
         if key != "movers":
             assert theme.github_trending == (), key
-    assert themes["crypto"].min_score == 7
-    assert all("stars:>10" in q for q in _queries(themes["crypto"]))
+    crypto_q = _queries(themes["crypto"])
+    assert themes["crypto"].min_score == 6
+    assert themes["crypto"].ai_cap == 2
+    # topic: qualifiers AND, so each topic is its own query. ai_cap fetches
+    # page 2: 5 queries × 2 pages = 10 Search calls, under the 30/min budget.
+    assert len(crypto_q) == 5
+    assert len(crypto_q) * 2 == 10
+    assert all("stars:>10" in q for q in crypto_q)
+    assert all("created:>{since:120d}" in q for q in crypto_q)
+    assert query_topics(themes["crypto"]) == [
+        "web3", "blockchain", "ethereum", "defi", "zero-knowledge",
+    ]
+    bars = {key: theme.min_score for key, theme in themes.items()}
+    assert bars["movers"] == 7
+    assert min(bars.values()) == 6
+    assert all(score == 6 for key, score in bars.items() if key != "movers")
 
     # Star ceiling: themed giants stay out. Movers and Trending are unchanged.
     for key in ("systems", "data", "web"):
