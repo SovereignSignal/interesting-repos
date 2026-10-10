@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from bot.formatter import build_messages, TELEGRAM_LIMIT
+from bot.formatter import build_message_groups, build_messages, TELEGRAM_LIMIT
 from bot.config import Theme
 
 
@@ -67,6 +67,16 @@ def test_build_messages_splits_over_limit():
     msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=titles)
     assert len(msgs) > 1
     assert all(len(m) <= TELEGRAM_LIMIT for m in msgs)
+
+
+def test_build_message_groups_cover_every_repo_once():
+    repos = [R(i, f"a/{i}", "u", "x" * 1000, i, "Go") for i in range(30)]
+    titles = [f"T{i}" for i in range(30)]
+    groups = build_message_groups(_theme(), repos, describe=lambda r: "", titles=titles)
+    seen = [i for _text, indexes in groups for i in indexes]
+    assert seen == list(range(30))
+    assert [text for text, _indexes in groups] == build_messages(
+        _theme(), repos, describe=lambda r: "", titles=titles)
 
 
 def test_build_messages_uses_summary_when_present():

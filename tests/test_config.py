@@ -145,6 +145,29 @@ def test_load_config_alert_chat_id_default_blank():
     assert load_config(env=_env(), themes_path=str(SAMPLE)).alert_chat_id == ""
 
 
+def test_load_config_ai_wire_defaults_off():
+    cfg = load_config(env=_env(), themes_path=str(SAMPLE))
+    assert cfg.ai_wire_enabled is False
+    assert cfg.ai_wire_url == "" and cfg.ai_wire_ingest_token == ""
+
+
+def test_load_config_ai_wire_flag_and_credentials():
+    cfg = load_config(env=_env(
+        AI_WIRE_ENABLED=" TRUE ",
+        AI_WIRE_URL="https://wire.example/",
+        AI_WIRE_INGEST_TOKEN="  secret  ",
+    ), themes_path=str(SAMPLE))
+    assert cfg.ai_wire_enabled is True
+    assert cfg.ai_wire_url == "https://wire.example/"
+    assert cfg.ai_wire_ingest_token == "secret"
+
+
+def test_load_config_ai_wire_flag_rejects_other_strings():
+    for raw in ("", "0", "false", "off", "no"):
+        cfg = load_config(env=_env(AI_WIRE_ENABLED=raw), themes_path=str(SAMPLE))
+        assert cfg.ai_wire_enabled is False
+
+
 def test_load_themes_parses_at_to_weekday_hour_pairs(tmp_path):
     p = tmp_path / "t.toml"
     p.write_text('[[theme]]\nkey="k"\nname="N"\nquery="q"\nat=["mon 13", "thu 16"]\n')

@@ -182,6 +182,18 @@ class Config:
     slack_bot_token: str = ""
     slack_channel_id: str = ""
     alert_chat_id: str = ""
+    # AI Wire registry. Off unless AI_WIRE_ENABLED is a truthy flag, so a
+    # deploy without the new vars does not call the ingest API.
+    ai_wire_enabled: bool = False
+    ai_wire_url: str = ""
+    ai_wire_ingest_token: str = ""
+
+
+_WIRE_ON = {"1", "true", "yes", "on"}
+
+
+def _wire_enabled(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in _WIRE_ON
 
 
 def load_config(env: dict | None = None, themes_path: str = "themes.toml",
@@ -216,4 +228,7 @@ def load_config(env: dict | None = None, themes_path: str = "themes.toml",
         slack_bot_token=env.get("SLACK_BOT_TOKEN", ""),
         slack_channel_id=env.get("SLACK_CHANNEL_ID", ""),
         alert_chat_id=env.get("ALERT_CHAT_ID", ""),
+        ai_wire_enabled=_wire_enabled(env.get("AI_WIRE_ENABLED")),
+        ai_wire_url=env.get("AI_WIRE_URL", "").strip(),
+        ai_wire_ingest_token=env.get("AI_WIRE_INGEST_TOKEN", "").strip(),
     )

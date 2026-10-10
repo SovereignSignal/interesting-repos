@@ -11,9 +11,11 @@ log = logging.getLogger("bot")
 
 @dataclass(frozen=True)
 class Pick:
-    """One curated repo plus the curator's one-line reason it's notable."""
+    """One curated repo, the curator's one-line reason, and the score when the
+    model actually scored it. Stars fallback leaves ``score`` empty."""
     repo: object
     why: str = ""
+    score: float | None = None
 
 
 class RankResult(list):
@@ -220,5 +222,5 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
     for i, score, why in sorted(parsed, key=lambda t: -t[1]):
         if 0 <= i < len(repos) and i not in seen and score >= theme.min_score:
             seen.add(i)
-            picks.append(Pick(repos[i], why))
+            picks.append(Pick(repos[i], why, float(score)))
     return picks, None

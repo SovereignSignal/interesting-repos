@@ -4,7 +4,7 @@ A push-only bot that discovers trending GitHub repos by theme, has an LLM curate
 posts one message per theme to a Telegram channel (mirrored to Slack). No server — a Python
 script run by Railway cron four times daily. **Live in production.**
 
-- **Run:** `python -m bot` · preview without sending: `python -m bot --dry-run` · custom themes: `--themes path.toml` · force a slot: `--now 2026-08-28T13:00:00Z` · one theme (ignores `at`): `--theme trending`
+- **Run:** `python -m bot` · preview without sending: `python -m bot --dry-run` · custom themes: `--themes path.toml` · force a slot: `--now 2026-08-28T13:00:00Z` · one theme (ignores `at`): `--theme trending` · replay posted repos to AI Wire from `state.json` (print only): `--backfill-ai-wire` · POST that replay: `--backfill-ai-wire --send`
 - **Test:** `.venv/bin/python -m pytest` (TDD throughout; keep them green)
 - **Stack:** Python 3.11+, httpx, tomllib, Ollama Cloud for LLM, Railway cron + a `/data` volume.
 - **GitHub:** `SovereignSignal/interesting-repos` (public). Design history in `docs/superpowers/{specs,plans}/`.
@@ -24,6 +24,7 @@ Trending sweeps the remainder):
 - Build `titles` (repo name, or a README H1 only when it is clearly the project name) + `summaries` (one ≤160-character sentence; the curator's *why* is not sent to the model), then `build_messages` (splits at the 4096-char Telegram limit). A blurb that says "notable", leaks a scoring judgment, or names another language or license is dropped and the repo's own description (then the README line) is used.
 - `send_message` (Telegram, primary) then `send_slack_message` (mirror; logs a WARNING on failure, never raises).
 - `save_state` **only after all of a theme's messages send** — a mid-delivery crash re-delivers rather than losing repos.
+- After the Telegram sends in the run, one AI Wire batch (`bot/ai_wire.py`) for the repos that were actually posted. `AI_WIRE_ENABLED` defaults off. Timeout 5s, one retry. A failed push logs `ai_wire push failed:` and does not fail the digest or change what was saved.
 
 ## Critical design rules (violating these has bitten us)
 
@@ -81,7 +82,8 @@ Optional: `GITHUB_TOKEN`, `STATE_DIR` (=`/data`), `OLLAMA_HOST` (=`https://ollam
 `OLLAMA_MODEL` (=`gemma4:31b`, the ollama.com `/api/tags` catalog id; `-cloud` is the local-offload sibling and is tried second), `OLLAMA_API_KEY`, `OLLAMA_CURATOR_MODEL` (comma-list of curator
 candidates, first reachable wins, base model is the final rung; blank ⇒ curate with `OLLAMA_MODEL`),
 `SEND_DELAY_SECONDS` (=20, spaces messages within a run), `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
-`ALERT_CHAT_ID`. Leave `OLLAMA_HOST` blank to disable all LLM features.
+`ALERT_CHAT_ID`, `AI_WIRE_ENABLED` (default off; `1`/`true`/`yes`/`on`), `AI_WIRE_URL` (origin;
+`POST {url}/api/ingest/items`), `AI_WIRE_INGEST_TOKEN`. Leave `OLLAMA_HOST` blank to disable all LLM features.
 
 Themes (`themes.toml`, parsed to frozen `Theme`): `key`, `name`, `emoji`, `query` (string **or list**),
 `sort`/`order`, `count` (cap), `rank` (`"llm"`|`"stars"`), `profile` (curator guidance),
@@ -112,7 +114,7 @@ theme, keep slots unique):
 | File | Responsibility |
 |---|---|
 | `main.py` | The two-phase run loop; slot matching; dedup; alert wiring |
-| `__main__.py` | CLI (`--dry-run`, `--themes`), logging hardening, crash alert |
+| `__main__.py` | CLI (`--dry-run`, `--themes`, `--backfill-ai-wire`), logging hardening, crash alert |
 | `config.py` | `Theme`/`Config` dataclasses, `load_themes`/`load_config`, `_parse_at`, `expand_since` |
 | `github.py` | `Repo`, `search_repos` (per_page=100, page, Retry-After), `fetch_repos` (core `GET /repos/{owner}/{repo}`, stops before the core budget is spent; does not overwrite the Search rate-limit sample), `readme_first_line`/`readme_excerpt`/`readme_parts` (raises on search error; readmes return "") |
 | `trending.py` | `parse_trending_html` / `collect_trending` (github.com/trending daily/weekly/monthly, optional per-language). Page id, description, and period-gain; `merge_trending` until a snapshot baseline exists |
@@ -127,7 +129,8 @@ theme, keep slots unique):
 | `telegram.py` | `send_message` — HTML, retries w/ backoff, token-sanitized errors |
 | `slack.py` | `send_slack_message` (never raises, returns bool), `html_to_mrkdwn` |
 | `alerts.py` | `llm_reachable` ping, `model_aliases` / `resolve_curator` / `resolve_title_model`, `send_alert` DM (no-op when `ALERT_CHAT_ID` unset) |
-| `state.py` | `load_state`/`save_state` (atomic `.tmp`+`os.replace`), `unsent`/`record_sent` (keyed by `theme.key`, cap 500), `unposted`/`record_posted` (`_posted`, cap 2000; Movers is exempt from the read) |
+| `state.py` | `load_state`/`save_state` (atomic `.tmp`+`os.replace`), `unsent`/`record_sent` (keyed by `theme.key`, cap 500), `unposted`/`record_posted` (`_posted`, cap 2000; Movers is exempt from the read), `record_wire` (`_ai_wire`, cap 2000; ingest rows, not ids) |
+| `ai_wire.py` | Map a posted repo to an ingest item and `POST` one batch. Flag-off no-op. 5s timeout, 1 retry. Never raises. `--backfill-ai-wire` replays `_ai_wire` (dry-run unless `--send`) |
 | `ollama.py` | `chat` / `chat_accepted` — `/api/chat`; `chat` returns "" on error (silent degradation); `chat_accepted` is HTTP 200 even with blank content |
 
 ## Operating notes

@@ -62,6 +62,36 @@ def test_cli_passes_now_and_theme_and_skips_telegram_on_dry_run(monkeypatch, tmp
     assert seen["now"].year == 2026 and seen["now"].hour == 13
 
 
+def test_cli_backfill_is_dry_run_and_skips_the_digest(monkeypatch, tmp_path, capsys):
+    import json
+    seen = {}
+    p = tmp_path / "t.toml"
+    p.write_text('[[theme]]\nkey="trending"\nname="T"\nquery="q"\n')
+    (tmp_path / "state.json").write_text(json.dumps({"_ai_wire": [{
+        "source_bot": "interesting-repos",
+        "kind": "repo",
+        "canonical_key": "repo:acme/widgets",
+        "title": "Widgets",
+        "url": "https://github.com/acme/widgets",
+    }]}))
+
+    def fake_load(**k):
+        seen["require_telegram"] = k.get("require_telegram", True)
+        from bot.config import load_config
+        return load_config(
+            env={"STATE_DIR": str(tmp_path)},
+            themes_path=str(p),
+            require_telegram=k.get("require_telegram", True),
+        )
+
+    monkeypatch.setattr(_cli, "load_config", fake_load)
+    monkeypatch.setattr(_cli, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("digest")))
+    rc = _cli.cli(["--backfill-ai-wire", "--send", "--dry-run", "--themes", str(p)])
+    assert rc == 0
+    assert seen["require_telegram"] is False
+    assert "repo:acme/widgets" in capsys.readouterr().out
+
+
 def test_cli_unknown_theme_exits(monkeypatch, tmp_path):
     p = tmp_path / "t.toml"
     p.write_text('[[theme]]\nkey="trending"\nname="T"\nquery="q"\n')
