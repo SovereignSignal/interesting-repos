@@ -49,6 +49,15 @@ converts the Telegram-HTML to mrkdwn); Slack is best-effort and never blocks a r
 a mirror failure now logs a WARNING. `ALERT_CHAT_ID` is a **separate** DM target used
 only for failure/degradation alerts — never for digest content.
 
+After a theme's Telegram sends succeed, the repos in those messages can be pushed
+to the AI Wire registry (`POST {AI_WIRE_URL}/api/ingest/items`). This stays off
+until `AI_WIRE_ENABLED` is `1`, `true`, `yes`, or `on`, and `AI_WIRE_URL` plus
+`AI_WIRE_INGEST_TOKEN` are set. The push times out at 5 seconds, retries once,
+and a failure only logs `ai_wire push failed:` — the digest still counts as sent.
+One batch per run. `python -m bot --backfill-ai-wire` prints ingest rows stored
+in `state.json` (`_ai_wire`) and does not POST; add `--send` to post them. Sent
+history that is only repo ids is skipped.
+
 ## Translation
 Descriptions in non-Latin scripts (Chinese, Japanese, Korean, Cyrillic, Arabic, …)
 are auto-translated to English via an **Ollama** chat model (default `gemma4:31b`).

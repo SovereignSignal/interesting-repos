@@ -51,7 +51,7 @@ def test_rank_llm_error_falls_back_to_stars():
     client = _client(lambda request: httpx.Response(500))
     out = rank(repos, _theme("llm"), ollama_host="http://x", ollama_model="m", client=client)
     assert [p.repo.id for p in out] == [2, 1]
-    assert all(p.why == "" for p in out)   # stars fallback carries no why
+    assert all(p.why == "" and p.score is None for p in out)   # stars fallback carries no why
 
 
 def test_rank_llm_unparseable_reply_falls_back_to_stars():
@@ -68,7 +68,7 @@ def test_rank_llm_keeps_only_scores_above_bar_ordered_by_score():
     out, reason = _rank_llm(repos, _theme("llm", 5), "http://x", "m", "k",
                             client=_content_client(reply))
     assert reason is None
-    assert [(p.repo.id, p.why) for p in out] == [(1, "novel"), (3, "solid")]  # 3-scorer gated out
+    assert [(p.repo.id, p.why, p.score) for p in out] == [(1, "novel", 9.0), (3, "solid", 7.0)]
 
 
 def test_rank_llm_all_below_bar_returns_empty_not_fallback():

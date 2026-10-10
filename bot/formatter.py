@@ -75,9 +75,19 @@ def _entry(repo, title, summary, describe, translate, delta=None, momentum=None,
     return f"{heading}\n{meta}\n{escape(desc)}".rstrip()
 
 
-def build_messages(theme, repos, describe, translate=lambda s: s, titles=None,
-                   summaries=None, deltas=None, momenta=None,
-                   delta_periods=None) -> list[str]:
+def posted_blurb(repo, summary, describe, translate=lambda s: s) -> str:
+    """Plain text of the blurb ``_entry`` posts. Empty when every source is dropped."""
+    return _public_desc(repo, summary, describe, translate)
+
+
+def build_message_groups(theme, repos, describe, translate=lambda s: s, titles=None,
+                         summaries=None, deltas=None, momenta=None,
+                         delta_periods=None) -> list[tuple[str, tuple[int, ...]]]:
+    """Telegram texts plus the repo indexes in each one.
+
+    A split puts the overflowing repo on the next message, so a channel
+    ``message_id`` can be attached to the repos that were actually in that post.
+    """
     header = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
     if titles is None:
         titles = [r.full_name for r in repos]
@@ -89,18 +99,31 @@ def build_messages(theme, repos, describe, translate=lambda s: s, titles=None,
         momenta = [None] * len(repos)
     if delta_periods is None:
         delta_periods = ["weekly"] * len(repos)
-    messages: list[str] = []
+    messages: list[tuple[str, tuple[int, ...]]] = []
     current = header
-    for repo, title, summary, delta, momentum, delta_period in zip(
-            repos, titles, summaries, deltas, momenta, delta_periods):
+    indexes: list[int] = []
+    for i, (repo, title, summary, delta, momentum, delta_period) in enumerate(zip(
+            repos, titles, summaries, deltas, momenta, delta_periods)):
         block = _entry(repo, title, summary, describe, translate, delta, momentum,
                        delta_period)
         candidate = f"{current}\n\n{block}"
         if len(candidate) > TELEGRAM_LIMIT:
-            messages.append(current)
+            messages.append((current, tuple(indexes)))
             current = block            # continuation message, no header
+            indexes = [i]
         else:
             current = candidate
+            indexes.append(i)
     if current:
-        messages.append(current)
+        messages.append((current, tuple(indexes)))
     return messages
+
+
+def build_messages(theme, repos, describe, translate=lambda s: s, titles=None,
+                   summaries=None, deltas=None, momenta=None,
+                   delta_periods=None) -> list[str]:
+    return [
+        text for text, _indexes in build_message_groups(
+            theme, repos, describe, translate, titles, summaries, deltas, momenta,
+            delta_periods)
+    ]

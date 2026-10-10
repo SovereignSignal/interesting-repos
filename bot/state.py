@@ -56,3 +56,41 @@ def record_posted(state: dict, repo_ids: list, cap: int = POSTED_CAP) -> dict:
             existing.append(rid)
     state[POSTED_KEY] = existing[-cap:]
     return state
+
+
+# Replay payload for AI Wire. Not a theme key, so unsent/unposted ignore it.
+# The id lists stay the dedupe record; this is the owner/repo, title, url, and
+# posted blurb those lists do not have. Older volumes simply lack the key.
+WIRE_KEY = "_ai_wire"
+WIRE_CAP = 2000
+
+
+def record_wire(state: dict, items: list, cap: int = WIRE_CAP) -> dict:
+    """Remember posted ingest items, newest last, one row per canonical key."""
+    raw = state.get(WIRE_KEY)
+    existing = []
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict) and isinstance(entry.get("canonical_key"), str):
+                existing.append(entry)
+    order: list[str] = []
+    by_key: dict = {}
+    for entry in existing:
+        key = entry["canonical_key"]
+        if key in by_key:
+            order = [item for item in order if item != key]
+        by_key[key] = entry
+        order.append(key)
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("canonical_key")
+        if not isinstance(key, str) or not key:
+            continue
+        if key in by_key:
+            order = [item_key for item_key in order if item_key != key]
+        by_key[key] = dict(item)
+        order.append(key)
+    if order:
+        state[WIRE_KEY] = [by_key[key] for key in order[-cap:]]
+    return state

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from bot.state import (
     load_state, save_state, unsent, record_sent,
-    unposted, record_posted, POSTED_KEY,
+    unposted, record_posted, POSTED_KEY, WIRE_KEY, record_wire,
 )
 
 
@@ -52,3 +52,16 @@ def test_record_posted_appends_without_duplicates_and_caps():
     assert state[POSTED_KEY] == [1, 2, 3]
     state = record_posted({}, list(range(10)), cap=3)
     assert state[POSTED_KEY] == [7, 8, 9]
+
+
+def test_record_wire_keeps_sent_ids_and_caps_by_key():
+    state = record_sent({"t": [1]}, "t", [2])
+    state = record_wire(state, [
+        {"canonical_key": "repo:a/old", "title": "Old"},
+        {"canonical_key": "repo:a/new", "title": "New"},
+    ])
+    state = record_wire(state, [{"canonical_key": "repo:a/old", "title": "Old again"}], cap=2)
+    assert state["t"] == [1, 2]
+    assert [row["canonical_key"] for row in state[WIRE_KEY]] == ["repo:a/new", "repo:a/old"]
+    assert state[WIRE_KEY][1]["title"] == "Old again"
+    assert [r.id for r in unsent(state, "t", [FakeRepo(1), FakeRepo(3)])] == [3]

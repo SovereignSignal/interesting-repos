@@ -22,7 +22,8 @@ from bot.filters import (
     is_ai_repo, is_empty_metadata,
 )
 from bot.ranker import rank
-from bot.formatter import build_messages
+from bot.formatter import build_message_groups
+from bot.ai_wire import items_for_indexes, push_posted
 from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
                           order_by_delta, retain)
 from bot.telegram import send_message
@@ -36,6 +37,7 @@ from bot.alerts import (
 )
 from bot.state import (
     load_state, save_state, unsent, record_sent, unposted, record_posted, posted_ids,
+    record_wire,
 )
 
 log = logging.getLogger("bot")
@@ -299,6 +301,7 @@ def _failure_reason(exc: BaseException, config) -> str:
         config.telegram_bot_token,
         config.ollama_api_key,
         config.slack_bot_token,
+        getattr(config, "ai_wire_ingest_token", ""),
     )
 
 
@@ -517,7 +520,11 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # theme's messages are all sent (a crash never marks a repo "sent" that wasn't
     # delivered); we prefer re-sending over losing a repo. Messages are spaced by
     # config.send_delay_seconds so a 10-theme digest trickles instead of flooding.
+    # AI Wire gets one batch for this run, and only repos whose Telegram send
+    # returned. The push itself is after the loop so a slow ingest cannot sit
+    # between two channel posts.
     sent_any = False
+    wire_batch: list = []
     for theme in config.themes:
         picked = results.get(theme.key)
         if not picked:
@@ -566,28 +573,50 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 age = age_days(r.created_at, today)
                 momenta.append(star_velocity(r, today) if age is not None and age >= 2
                                else None)
-            messages = build_messages(theme, repos_, describe, translate, titles,
-                                      summaries, deltas, momenta, delta_periods)
+            groups = build_message_groups(theme, repos_, describe, translate, titles,
+                                           summaries, deltas, momenta, delta_periods)
             if dry_run:
-                for m in messages:
-                    print(m)
+                for text, _indexes in groups:
+                    print(text)
                     print("-" * 40)
                 continue
-            for m in messages:
+            posted_items = []
+            for text, indexes in groups:
                 if sent_any:
                     time.sleep(config.send_delay_seconds)
-                send_message(config.telegram_bot_token, config.telegram_chat_id, m)
-                mirrored = send_slack_message(config.slack_bot_token, config.slack_channel_id, m)
+                response = send_message(config.telegram_bot_token, config.telegram_chat_id, text)
+                mirrored = send_slack_message(config.slack_bot_token, config.slack_channel_id, text)
                 if config.slack_bot_token and config.slack_channel_id and not mirrored:
                     # the mirror never raises, so a broken token/channel is otherwise invisible
                     log.warning("theme %s: slack mirror failed (telegram delivered)", theme.key)
                 sent_any = True
+                try:
+                    chunk = items_for_indexes(
+                        theme_name=theme.name,
+                        picks=picked,
+                        titles=titles,
+                        summaries=summaries,
+                        indexes=indexes,
+                        describe=describe,
+                        translate=translate,
+                        deltas=deltas if theme.delta_days else None,
+                        gains=gained.get(theme.key, {}),
+                        posted_at=now,
+                        response=response,
+                    )
+                except Exception as exc:
+                    # Mapping must not turn a delivered digest into a theme failure.
+                    log.warning("ai_wire push failed: %s", _failure_reason(exc, config))
+                    chunk = []
+                posted_items.extend(chunk)
+                wire_batch.extend(chunk)
             # Visibility only: a 1-2 repo digest still goes out unchanged.
             if len(picked) < THIN_POST_BELOW:
                 log.warning("%s", thin_post_line(theme.key, len(picked)))
             ids = [p.repo.id for p in picked]
             state = record_sent(state, theme.key, ids)
             state = record_posted(state, ids)   # movers writes too; only *reads* are exempt
+            state = record_wire(state, posted_items)
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception as exc:
@@ -595,6 +624,14 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             log.exception("theme %s failed during delivery", theme.key)
             outcomes[theme.key] = (
                 "error", len(picked) if picked else 0, _failure_reason(exc, config))
+
+    # One batch for every repo this run actually posted. Flag-off returns
+    # without a request. A dead registry must not change ``failures``.
+    if not dry_run and wire_batch:
+        try:
+            push_posted(config, wire_batch)
+        except Exception as exc:
+            log.warning("ai_wire push failed: %s", _failure_reason(exc, config))
 
     if not dry_run:
         if degraded:

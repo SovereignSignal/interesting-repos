@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from html import escape
 
+from bot.ai_wire import backfill
 from bot.config import load_config
 from bot.main import run
 from bot.alerts import send_alert
@@ -39,10 +40,27 @@ def cli(argv=None) -> int:
                         help="simulate this UTC instant (e.g. 2026-08-28T13:00:00Z)")
     parser.add_argument("--theme", metavar="KEY",
                         help="run only this theme key (ignores at slots)")
+    parser.add_argument(
+        "--backfill-ai-wire",
+        action="store_true",
+        help="replay posted repos from state.json to AI Wire "
+             "(prints the batch; POST only with --send)",
+    )
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        help="with --backfill-ai-wire, POST the batch instead of printing it",
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
-    config = load_config(themes_path=args.themes, require_telegram=not args.dry_run)
+    config = load_config(
+        themes_path=args.themes,
+        require_telegram=not args.dry_run and not args.backfill_ai_wire,
+    )
+    if args.backfill_ai_wire:
+        # Does not run the digest. --dry-run keeps this a print even with --send.
+        return backfill(config, send=args.send and not args.dry_run)
     if args.theme:
         matched = [t for t in config.themes if t.key == args.theme]
         if not matched:
