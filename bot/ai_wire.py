@@ -225,16 +225,30 @@ def _close(resp) -> None:
         return
 
 
-def _upserted(resp, fallback: int) -> int:
+def _nonneg_int(value) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _written(resp, fallback: int) -> int:
+    """Rows the ingest call created plus rows it updated.
+
+    The registry reports new rows as ``created`` and existing rows as
+    ``upserted``. Logging only ``upserted`` printed ``n=0`` when every item
+    in the batch was new. Missing both fields falls back to the batch size.
+    """
     try:
         body = resp.json()
     except Exception:
         return fallback
-    if isinstance(body, dict):
-        n = body.get("upserted")
-        if isinstance(n, int) and not isinstance(n, bool) and n >= 0:
-            return n
-    return fallback
+    if not isinstance(body, dict):
+        return fallback
+    created = _nonneg_int(body.get("created"))
+    updated = _nonneg_int(body.get("upserted"))
+    if created is None and updated is None:
+        return fallback
+    return (created or 0) + (updated or 0)
 
 
 def _post_batch(client, endpoint: str, token: str, batch: list, timeout: float) -> bool:
@@ -257,7 +271,7 @@ def _post_batch(client, endpoint: str, token: str, batch: list, timeout: float) 
         try:
             status = getattr(resp, "status_code", None)
             if status == 200:
-                log.info("ai_wire push ok n=%s", _upserted(resp, len(batch)))
+                log.info("ai_wire push ok n=%s", _written(resp, len(batch)))
                 return True
             reason = f"HTTP {status}" if status else "HTTP error"
         finally:

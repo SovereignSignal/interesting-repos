@@ -1143,6 +1143,173 @@ def test_run_hydrate_budget_skips_idless_rows_past_the_cap(tmp_path, monkeypatch
     assert "acme/r8" not in body and "acme/r9" not in body
 
 
+def _live_repo(idx, name):
+    return Repo(
+        1000 + idx, name, f"https://github.com/{name}", "a tool", 50,
+        "Go", [], False, False, created_at="2026-01-01T00:00:00Z",
+        pushed_at="2026-06-01T00:00:00Z",
+    )
+
+
+def test_run_movers_tops_up_when_the_first_slice_leaves_the_pool_short(tmp_path, monkeypatch, caplog):
+    """Sunday 2026-10-11 looked up 8 of 19 and posted one. The other 11 are
+    looked up when those 8 do not leave five candidates, and not past the
+    movers ceiling."""
+    from bot.ranker import Pick
+    from bot.trending import TrendingHit
+    caplog.set_level("INFO")
+    hits = [TrendingHit(f"acme/r{i}", 100 - i, "daily") for i in range(19)]
+    batches = []
+
+    def fetch(names, **k):
+        batches.append(list(names))
+        out = []
+        for name in names:
+            idx = int(name.rsplit("r", 1)[-1])
+            repo = _live_repo(idx, name)
+            if idx < main.HYDRATE_LIMIT:
+                repo = Repo(
+                    repo.id, repo.full_name, repo.html_url, repo.description,
+                    repo.stars, repo.language, [], False, True,
+                    created_at=repo.created_at, pushed_at=repo.pushed_at,
+                )
+            out.append(repo)
+        return out
+
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="🚀", query="q", count=20,
+                  delta_days=7, github_trending=("daily",))
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert batches[0] == [f"acme/r{i}" for i in range(main.HYDRATE_LIMIT)]
+    assert batches[1] == [f"acme/r{i}" for i in range(main.HYDRATE_LIMIT, 19)]
+    assert len(batches[0]) + len(batches[1]) <= main.MOVERS_HYDRATE_LIMIT
+    body = "\n".join(sent)
+    assert "acme/r0" not in body
+    assert "acme/r8" in body and "acme/r18" in body
+    assert "candidates < 5" in caplog.text
+
+
+def test_run_movers_top_up_stops_at_the_core_lookup_ceiling(tmp_path, monkeypatch):
+    from bot.ranker import Pick
+    from bot.trending import TrendingHit
+    hits = [TrendingHit(f"acme/r{i}", 200 - i, "daily") for i in range(30)]
+    fetched = []
+
+    def fetch(names, **k):
+        fetched.extend(list(names))
+        out = []
+        for name in names:
+            idx = int(name.rsplit("r", 1)[-1])
+            archived = idx < main.HYDRATE_LIMIT
+            out.append(Repo(
+                1000 + idx, name, f"https://github.com/{name}", "a tool", 50,
+                "Go", [], False, archived, created_at="2026-01-01T00:00:00Z",
+                pushed_at="2026-06-01T00:00:00Z",
+            ))
+        return out
+
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: list(hits))
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="🚀", query="q", count=30,
+                  delta_days=7, github_trending=("daily",))
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert len(fetched) == main.MOVERS_HYDRATE_LIMIT
+    assert fetched[main.HYDRATE_LIMIT] == "acme/r8"
+    assert "acme/r29" not in fetched
+
+
+def test_run_movers_top_up_prefers_repos_that_already_have_a_baseline(tmp_path, monkeypatch):
+    """The first slice stays id-less rows (they are not candidates until looked
+    up). The top-up spends the rest of the ceiling on baseline ids before
+    higher-gain rows that have none."""
+    from bot.ranker import Pick
+    from bot.trending import TrendingHit
+    _seed_snapshot(tmp_path, date(2026, 6, 1), {4242: 10})
+    # More names than the movers ceiling. The baseline stub is last in page
+    # order, so without the top-up sort it would be the name that gets cut.
+    idless = [TrendingHit(f"acme/n{i}", 100 - i, "weekly") for i in range(28)]
+    known = TrendingHit(
+        "acme/known", 1, "weekly", stars=80, repo_id=4242,
+        description="a known mover", language="Go",
+    )
+    batches = []
+
+    def fetch(names, **k):
+        batches.append(list(names))
+        out = []
+        for name in names:
+            if name == "acme/known":
+                out.append(Repo(
+                    4242, name, f"https://github.com/{name}", "a known mover",
+                    80, "Go", [], False, False, created_at="2024-01-01T00:00:00Z",
+                    pushed_at="2026-06-01T00:00:00Z",
+                ))
+                continue
+            idx = int(name.rsplit("n", 1)[-1])
+            archived = idx < main.HYDRATE_LIMIT
+            out.append(Repo(
+                1000 + idx, name, f"https://github.com/{name}", "a tool", 50,
+                "Go", [], False, archived, created_at="2026-01-01T00:00:00Z",
+                pushed_at="2026-06-01T00:00:00Z",
+            ))
+        return out
+
+    sent = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "collect_trending", lambda *a, **k: idless + [known])
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "rank", lambda repos, theme, **k: [Pick(r) for r in repos])
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    theme = Theme(key="movers", name="Movers", emoji="🚀", query="q", count=30,
+                  delta_days=7, github_trending=("weekly",))
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 6, 8, 13))
+    assert batches[0] == [f"acme/n{i}" for i in range(main.HYDRATE_LIMIT)]
+    assert batches[1][0] == "acme/known"
+    assert len(batches[0]) + len(batches[1]) == main.MOVERS_HYDRATE_LIMIT
+    assert "acme/n27" not in [name for batch in batches for name in batch]
+    assert "acme/known" in "\n".join(sent)
+
+
+def test_run_non_delta_theme_does_not_raise_the_hydrate_cap(tmp_path, monkeypatch):
+    from bot.trending import TrendingHit
+    hits = [
+        TrendingHit(f"acme/g{i}", 50 - i, "daily", stars=100, repo_id=8000 + i,
+                    description="a go compiler", language="Go")
+        for i in range(10)
+    ]
+    fetched = []
+
+    def fetch(names, **k):
+        fetched.extend(list(names))
+        return [
+            Repo(8000 + n, name, f"https://github.com/{name}", "a go compiler",
+                 100, "Go", [], False, True, created_at="2020-01-01T00:00:00Z",
+                 pushed_at="2026-06-01T00:00:00Z")
+            for n, name in enumerate(names)
+        ]
+
+    _opt_in_external(monkeypatch, trending=hits)
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [])
+    monkeypatch.setattr(main, "fetch_repos", fetch)
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    theme = Theme(key="systems", name="Systems", emoji="",
+                  query="language:Go created:>{since:180d}", count=5)
+    main.run(_cfg(tmp_path, [theme]), now=datetime(2026, 10, 7, 19))
+    assert fetched == [f"acme/g{i}" for i in range(main.HYDRATE_LIMIT)]
+
+
 def test_run_ninth_page_stub_is_not_fetched_and_still_posts(tmp_path, monkeypatch):
     from bot.ranker import Pick
     from bot.trending import TrendingHit

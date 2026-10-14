@@ -101,6 +101,48 @@ def test_prepare_splits_a_sentence_that_ends_on_a_number():
     assert version == "Library v1.2 ships one binary."
 
 
+def test_prepare_does_not_split_on_initials_or_abbreviations():
+    # "C. elegans" was posted as "…based on the real C." The period after a
+    # single letter, and after e.g. / i.e. / vs. / Dr. / U.S. / etc., is not
+    # the end of the sentence. A later real period still is.
+    from bot.summaries import prepare_public_blurb
+    repo = R("a/worm", language="Python")
+    elegans = (
+        "Models based on the real C. elegans connectome. "
+        "It is notable for its diagrams."
+    )
+    assert prepare_public_blurb(elegans, repo) == (
+        "Models based on the real C. elegans connectome."
+    )
+    initials = "J. R. R. Tolkien wrote a parser that developers still use."
+    assert prepare_public_blurb(initials, repo) == initials
+    examples = (
+        "It compares results, e.g. latency and i.e. the common case, "
+        "before it ships."
+    )
+    assert prepare_public_blurb(examples, repo) == examples
+    versus = "A CLI vs. a library is the choice this tool makes for developers."
+    assert prepare_public_blurb(versus, repo) == versus
+    doctor = (
+        "Dr. Ada wrote a compiler that still builds. It is notable for its age."
+    )
+    assert prepare_public_blurb(doctor, repo) == "Dr. Ada wrote a compiler that still builds."
+    census = "The U.S. census files ship with a parser for each state."
+    assert prepare_public_blurb(census, repo) == census
+    etc = "It reads logs, configs, etc. and writes one report for operators."
+    assert prepare_public_blurb(etc, repo) == etc
+    long = (
+        "WormBase annotates genes based on the real C. elegans genome, "
+        "with curated models and expression tables for laboratories that "
+        "still share sequencing data by email and need one maintained reference "
+        "instead of a pile of slides."
+    )
+    assert len(long) > 160
+    clipped = prepare_public_blurb(long, repo)
+    assert clipped and "C. elegans" in clipped and not clipped.endswith("C.")
+    assert len(clipped) <= 160
+
+
 def test_prepare_keeps_the_first_sentence_and_drops_notable():
     from bot.summaries import prepare_public_blurb
     repo = R("wellwelwel/lagune", language="TypeScript")
