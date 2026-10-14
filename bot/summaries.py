@@ -50,8 +50,13 @@ _JUDGMENT_RE = re.compile(
 # Sentence end is "." or "?" followed by a space or the end. "!" is not a
 # boundary: "osu!" shows up inside names. "v1.2" is not one either, because
 # that dot is followed by a digit rather than a space. "22. It" is a boundary
-# even though the dot follows a digit.
-_SENTENCE_END = re.compile(r"^.+?[.?](?=\s|$)")
+# even though the dot follows a digit. A single letter ("C. elegans",
+# "e.g.", "U.S.") and the abbreviations below are not boundaries — "C."
+# was closing blurbs mid-sentence.
+_ABBREVIATIONS = frozenset({
+    "vs", "dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st",
+    "inc", "ltd", "fig", "vol", "pp", "al", "cf", "etc",
+})
 
 _LANG_CANON = {
     "python": "python", "py": "python",
@@ -165,10 +170,58 @@ def _strip_slug_opener(text: str, repo) -> str:
     return rest or text
 
 
+def _token_before(text: str, i: int) -> str:
+    """The non-space run immediately before ``text[i]``, excluding that index."""
+    j = i - 1
+    while j >= 0 and not text[j].isspace():
+        j -= 1
+    return text[j + 1:i]
+
+
+def _is_abbreviation(bare: str) -> bool:
+    """True when ``bare`` (no trailing period) is an initial or abbreviation.
+
+    ``C``, ``U.S``, and ``e.g`` are initials: every dot-separated piece is one
+    letter. ``Dr`` and ``etc`` come from ``_ABBREVIATIONS``. ``am`` is not in
+    that set, so "I am." still ends a sentence; "a.m." is initials.
+    """
+    if not bare or bare.endswith("."):
+        return False
+    parts = bare.split(".")
+    if parts and all(len(part) == 1 and part.isalpha() for part in parts):
+        return True
+    key = "".join(ch for ch in bare.lower() if ch.isalpha())
+    return key in _ABBREVIATIONS
+
+
+def _sentence_end_at(text: str, i: int) -> bool:
+    """True when ``text[i]`` closes a sentence.
+
+    The mark must be "." or "?" with a space or the end of the text after it.
+    An ellipsis, a dotted version ("v1.2"), a single-letter initial, or a
+    listed abbreviation does not close the sentence.
+    """
+    if i < 0 or i >= len(text):
+        return False
+    mark = text[i]
+    if mark not in ".?":
+        return False
+    nxt = text[i + 1] if i + 1 < len(text) else ""
+    if nxt and not nxt.isspace():
+        return False
+    if mark == "." and i >= 1 and text[i - 1] == ".":
+        return False
+    if mark == "." and _is_abbreviation(_token_before(text, i)):
+        return False
+    return i > 0
+
+
 def _first_sentence(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
-    match = _SENTENCE_END.match(text)
-    return match.group(0).strip() if match else text
+    for i, _ch in enumerate(text):
+        if _sentence_end_at(text, i):
+            return text[:i + 1].strip()
+    return text
 
 
 def _normalize_blurb(text: str) -> str:
@@ -215,12 +268,12 @@ def _fit_window(text: str, limit: int) -> str:
 
 def _last_sentence_in(window: str) -> str | None:
     last = None
-    for match in re.finditer(r"[.?](?=\s|$)", window):
-        # "..." is an ellipsis, and "v1.2" never matches (the dot is followed
-        # by a digit). "22. It" does.
-        if window[match.start()] == "." and match.start() >= 1 and window[match.start() - 1] == ".":
+    for i, _ch in enumerate(window):
+        # Same boundary as ``_first_sentence``: ellipsis, versions, initials,
+        # and abbreviations are not places to close a clipped blurb.
+        if not _sentence_end_at(window, i):
             continue
-        candidate = window[:match.end()].rstrip()
+        candidate = window[:i + 1].rstrip()
         if candidate.endswith("...") or candidate.endswith("…"):
             continue
         last = candidate

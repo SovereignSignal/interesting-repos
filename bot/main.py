@@ -49,6 +49,13 @@ CANDIDATE_LIMIT = 30
 # fixture stays on search (+ an explicit github_trending window).
 EXTRA_SOURCES = True
 HYDRATE_LIMIT = 8
+# Sunday 2026-10-11 Movers looked up 8 of 19 external repos and posted one;
+# four of the lookups had no snapshot baseline. A delta theme whose shaped
+# pool is still under MOVERS_MIN_CANDIDATES may keep looking up, baseline ids
+# first, until this many core GETs. fetch_repos stops when the core bucket
+# drops below its reserve, so the extra calls leave README fetches room.
+MOVERS_HYDRATE_LIMIT = 24
+MOVERS_MIN_CANDIDATES = 5
 # Cheap watch query folded into today's snapshot so Movers has mid-week memory
 # of repos that weren't in that hour's theme search. Disposable; failures warn.
 WATCH_QUERY = "created:>{since:120d} stars:>100"
@@ -122,16 +129,152 @@ def _push_name(ordered: list, seen: set, name: str) -> None:
     ordered.append(name)
 
 
+def _baseline_first(names: list[str], name_ids: dict, baseline_ids) -> list[str]:
+    """Stable order with snapshot-baseline ids ahead of everyone else.
+
+    A name whose GitHub id is not known yet (an id-less page row) stays in
+    place. Empty ``baseline_ids`` leaves the list unchanged.
+    """
+    if not baseline_ids:
+        return list(names)
+    ranked = list(enumerate(names))
+    ranked.sort(key=lambda item: (
+        0 if name_ids.get(item[1].lower()) in baseline_ids else 1,
+        item[0],
+    ))
+    return [name for _, name in ranked]
+
+
+class _ExternalHydration:
+    """Core-API lookups for one theme's Trending and GitNova rows.
+
+    The first ``take`` is ``HYDRATE_LIMIT`` names. ``pending`` is what that
+    slice left over, so a short Movers pool can look up more without a second
+    copy of the fold. ``fetch_repos`` still stops when the core bucket is
+    under its reserve. A failed lookup keeps the page stub.
+    """
+
+    def __init__(self, theme, base_repos, search_names, thits, ghits, stubs,
+                 trending_idless, ordered, name_ids, inflated_dropped, blocked_ids):
+        self.theme = theme
+        self.base_repos = list(base_repos)
+        self.search_names = set(search_names)
+        self.thits = thits
+        self.ghits = ghits
+        self.stubs = list(stubs)
+        self.trending_idless = list(trending_idless)
+        self.ordered = list(ordered)
+        self.name_ids = dict(name_ids)
+        self.inflated_dropped = inflated_dropped
+        self.blocked_ids = set(blocked_ids)
+        self.fetched: dict = {}
+        self.attempted: list[str] = []
+
+    def pending(self) -> list[str]:
+        done = {name.lower() for name in self.attempted}
+        return [name for name in self.ordered if name.lower() not in done]
+
+    def take(self, names, token: str) -> None:
+        if not names:
+            return
+        self.attempted.extend(names)
+        try:
+            hydrated = fetch_repos(names, token=token)
+        except Exception:
+            log.warning("theme %s: external hydrate failed; keeping page data",
+                        self.theme.key, exc_info=True)
+            hydrated = [None] * len(names)
+        for name, repo in zip(names, hydrated):
+            if repo is not None:
+                self.fetched[name.lower()] = repo
+
+    def result(self):
+        fetched = self.fetched
+        attempted = {name.lower() for name in self.attempted}
+        repos = list(self.base_repos) + list(self.stubs)
+        missing = []
+        aligned = []
+        for name in self.trending_idless:
+            key = name.lower()
+            if key not in attempted:
+                continue
+            missing.append(name)
+            aligned.append(fetched.get(key))
+        merged, gains = merge_trending(repos, self.thits, missing, aligned)
+
+        replaced = []
+        for repo in merged:
+            api = fetched.get(repo.full_name.lower())
+            if api is not None and (api.is_fork or api.is_archived):
+                gains.pop(repo.id, None)
+                if api.id != repo.id:
+                    gains.pop(api.id, None)
+                continue
+            if api is None:
+                replaced.append(repo)
+                continue
+            if repo.id in gains and api.id != repo.id:
+                gains[api.id] = gains.pop(repo.id)
+            replaced.append(api)
+        merged = replaced
+
+        for hit in self.ghits:
+            key = hit.full_name.lower()
+            existing = next((repo for repo in merged if repo.full_name.lower() == key), None)
+            api = fetched.get(key)
+            if existing is not None:
+                if hit.stars_today:
+                    gains[existing.id] = prefer_gain(
+                        gains.get(existing.id), hit.stars_today, "daily")
+                summary = public_summary(hit.summary)
+                if summary and not existing.description:
+                    merged = [
+                        with_description(repo, summary) if repo.full_name.lower() == key else repo
+                        for repo in merged
+                    ]
+                continue
+            if api is None or api.is_fork or api.is_archived or api.id in self.blocked_ids:
+                continue
+            api = with_description(api, public_summary(hit.summary))
+            if any(repo.id == api.id for repo in merged):
+                if hit.stars_today:
+                    gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
+                continue
+            if hit.stars_today:
+                gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
+            merged.append(api)
+
+        trend_names = {hit.full_name.lower() for hit in self.thits}
+        trending_added = sum(
+            1 for repo in merged
+            if repo.full_name.lower() in trend_names
+            and repo.full_name.lower() not in self.search_names
+        )
+        gitnova_names = {hit.full_name.lower() for hit in self.ghits}
+        gitnova_added = sum(
+            1 for repo in merged
+            if repo.full_name.lower() in gitnova_names
+            and repo.full_name.lower() not in self.search_names
+            and repo.full_name.lower() not in trend_names
+        )
+        return (merged, gains, trending_added, len(self.thits),
+                gitnova_added, self.inflated_dropped)
+
+
 def _merge_external(theme, repos: list, trending_hits: list, gitnova_hits: list,
                     inflated: set, blocked_ids: set, token: str):
     """Fold Trending and GitNova into ``repos``.
 
     Returns ``(repos, gains, trending_added, trending_considered, gitnova_added,
-    inflated_dropped)``. Page rows that already carry a GitHub id are usable
-    without an API call. ``HYDRATE_LIMIT`` core GETs cover, in order: over-ceiling
-    stubs (the young-repo exemption needs ``created_at``), id-less names (state
-    dedupe needs the numeric id), then the highest page-gain stubs. A hydrate
-    failure keeps the page stub. Never raises.
+    inflated_dropped, hydration)``. Page rows that already carry a GitHub id
+    are usable without an API call. The first ``HYDRATE_LIMIT`` core GETs
+    cover, in order: over-ceiling stubs (the young-repo exemption needs
+    ``created_at``), id-less names (state dedupe needs the numeric id), then
+    the highest page-gain stubs. A hydrate failure keeps the page stub.
+    Never raises. The returned hydration can look up the names past the first
+    slice; callers that top up a short Movers pool order that remainder with
+    baseline ids first. ``fetch_repos`` still enforces the core rate-limit
+    reserve.
     """
     dropped = 0
     kept = []
@@ -175,7 +318,8 @@ def _merge_external(theme, repos: list, trending_hits: list, gitnova_hits: list,
         stubs.append(stub)
         known.add(key)
         ids.add(stub.id)
-    repos = list(repos) + stubs
+    base_repos = list(repos)
+    repos = base_repos + stubs
 
     trending_idless = []
     for hit in thits:
@@ -201,97 +345,89 @@ def _merge_external(theme, repos: list, trending_hits: list, gitnova_hits: list,
     gain_of = {hit.full_name.lower(): hit.gained for hit in thits}
     others.sort(key=lambda stub: gain_of.get(stub.full_name.lower(), 0), reverse=True)
 
+    name_ids = {stub.full_name.lower(): stub.id for stub in stubs}
+    prefix: list[str] = []
+    seen_prefix: set[str] = set()
+    for stub in over:
+        _push_name(prefix, seen_prefix, stub.full_name)
+    rest: list[str] = []
+    seen_rest: set[str] = set()
+    for name in trending_idless:
+        _push_name(rest, seen_rest, name)
+    for name in gitnova_idless:
+        _push_name(rest, seen_rest, name)
+    for stub in others:
+        _push_name(rest, seen_rest, stub.full_name)
     ordered: list[str] = []
     seen_names: set[str] = set()
-    for stub in over:
-        _push_name(ordered, seen_names, stub.full_name)
-    for name in trending_idless:
+    for name in prefix + rest:
         _push_name(ordered, seen_names, name)
-    for name in gitnova_idless:
-        _push_name(ordered, seen_names, name)
-    for stub in others:
-        _push_name(ordered, seen_names, stub.full_name)
     if len(ordered) > HYDRATE_LIMIT:
         log.info("theme %s: enriched %d of %d external repos (core API budget)",
                  theme.key, HYDRATE_LIMIT, len(ordered))
-        ordered = ordered[:HYDRATE_LIMIT]
 
-    fetched: dict = {}
-    if ordered:
-        try:
-            hydrated = fetch_repos(ordered, token=token)
-        except Exception:
-            log.warning("theme %s: external hydrate failed; keeping page data",
-                        theme.key, exc_info=True)
-            hydrated = [None] * len(ordered)
-        for name, repo in zip(ordered, hydrated):
-            if repo is not None:
-                fetched[name.lower()] = repo
-
-    missing = []
-    aligned = []
-    for name in trending_idless:
-        key = name.lower()
-        if key not in {item.lower() for item in ordered}:
-            continue
-        missing.append(name)
-        aligned.append(fetched.get(key))
-    merged, gains = merge_trending(repos, thits, missing, aligned)
-
-    replaced = []
-    for repo in merged:
-        api = fetched.get(repo.full_name.lower())
-        if api is not None and (api.is_fork or api.is_archived):
-            gains.pop(repo.id, None)
-            if api.id != repo.id:
-                gains.pop(api.id, None)
-            continue
-        if api is None:
-            replaced.append(repo)
-            continue
-        if repo.id in gains and api.id != repo.id:
-            gains[api.id] = gains.pop(repo.id)
-        replaced.append(api)
-    merged = replaced
-
-    for hit in ghits:
-        key = hit.full_name.lower()
-        existing = next((repo for repo in merged if repo.full_name.lower() == key), None)
-        api = fetched.get(key)
-        if existing is not None:
-            if hit.stars_today:
-                gains[existing.id] = prefer_gain(
-                    gains.get(existing.id), hit.stars_today, "daily")
-            summary = public_summary(hit.summary)
-            if summary and not existing.description:
-                merged = [
-                    with_description(repo, summary) if repo.full_name.lower() == key else repo
-                    for repo in merged
-                ]
-            continue
-        if api is None or api.is_fork or api.is_archived or api.id in blocked_ids:
-            continue
-        api = with_description(api, public_summary(hit.summary))
-        if any(repo.id == api.id for repo in merged):
-            if hit.stars_today:
-                gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
-            continue
-        if hit.stars_today:
-            gains[api.id] = prefer_gain(gains.get(api.id), hit.stars_today, "daily")
-        merged.append(api)
-
-    trend_names = {hit.full_name.lower() for hit in thits}
-    trending_added = sum(
-        1 for repo in merged
-        if repo.full_name.lower() in trend_names and repo.full_name.lower() not in search_names
+    hydration = _ExternalHydration(
+        theme, base_repos, search_names, thits, ghits, stubs, trending_idless,
+        ordered, name_ids, dropped, blocked_ids,
     )
-    gitnova_names = {hit.full_name.lower() for hit in ghits}
-    gitnova_added = sum(
-        1 for repo in merged
-        if repo.full_name.lower() in gitnova_names and repo.full_name.lower() not in search_names
-        and repo.full_name.lower() not in trend_names
-    )
-    return merged, gains, trending_added, len(thits), gitnova_added, dropped
+    hydration.take(ordered[:HYDRATE_LIMIT], token)
+    return (*hydration.result(), hydration)
+
+
+def _shape_candidates(repos, theme, *, today, state, claimed, today_snap,
+                      baseline, gains, token):
+    """Fork/archive filter, snapshot feed, delta order, then the gauntlet.
+
+    Returns ``(repos, n_searched, n_clean, n_unsent, dropped_no_baseline,
+    baseline_days)``. ``repos`` is capped at ``CANDIDATE_LIMIT``. The snapshot
+    is updated before the delta drop, matching the previous inline order.
+    """
+    repos = [r for r in repos if not r.is_fork and not r.is_archived]
+    for r in repos:
+        today_snap[r.id] = r.stars      # feed the Movers store (every theme, every run)
+    dropped_no_baseline = 0
+    baseline_days = 0
+    if theme.delta_days:                # source candidates by N-day star growth
+        # Baseline merges every snapshot from delta+tolerance ago through
+        # yesterday (oldest count per repo). Today's file is not read.
+        before_delta = len(repos)
+        # Snapshot diff when we have one; otherwise the Trending page's
+        # period gain so an older repo is eligible the day we first see it.
+        extras = gains if theme.github_trending else None
+        repos = order_by_delta(
+            repos, baseline or {}, extras, span_days=theme.delta_days)
+        dropped_no_baseline = before_delta - len(repos)
+        baseline_days = getattr(baseline, "baseline_days", 0) if baseline is not None else 0
+    elif gains:
+        # No snapshot reorder. Put Trending hits first so the candidate
+        # cap cannot bury an any-age repo under the search head.
+        front = [r for r in repos if r.id in gains]
+        back = [r for r in repos if r.id not in gains]
+        repos = front + back
+    n_searched = len(repos)
+    repos = clean(repos, today, theme.max_idle_days)
+    n_clean = len(repos)
+    repos = unsent(state, theme.key, repos)
+    repos = [r for r in repos if r.id not in claimed]
+    if not theme.delta_days:          # Movers may re-feature a known breakout
+        repos = unposted(state, repos)
+    n_unsent = len(repos)
+    # cap=0 only: empty desc+topics + a README that is clearly AI → drop.
+    # Not applied under ai_cap=N (too aggressive on thin metadata).
+    if theme.agent_skill_cap == 0 or theme.ai_cap == 0:
+        kept = []
+        for r in repos:
+            if is_empty_metadata(r) and not is_ai_repo(r):
+                line = readme_first_line(r.full_name, token=token)
+                if is_ai_repo(r, readme=line):
+                    continue
+            kept.append(r)
+        repos = kept
+    repos = cap_agent_skills(repos, theme.agent_skill_cap)
+    repos = cap_ai(repos, theme.ai_cap)
+    repos = cap_stars(repos, theme.max_stars, theme.max_stars_exempt_days, today)
+    repos = repos[:CANDIDATE_LIMIT]
+    return repos, n_searched, n_clean, n_unsent, dropped_no_baseline, baseline_days
 
 
 def _failure_reason(exc: BaseException, config) -> str:
@@ -401,61 +537,49 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             blocked_ids = set(state.get(theme.key, []))
             if not theme.delta_days:
                 blocked_ids |= posted_ids(state)
+            # Loaded once. A short Movers pool's extra lookups prefer ids
+            # already in this baseline.
+            baseline = (find_baseline(config.state_dir, today, theme.delta_days)
+                        if theme.delta_days else None)
+            if theme.delta_days:
+                baselines[theme.key] = baseline
             (repos, theme_gains, trending_added, trending_considered,
-             gitnova_added, inflated_dropped) = _merge_external(
+             gitnova_added, inflated_dropped, hydration) = _merge_external(
                 theme, repos, trending_hits, gitnova_hits, inflated,
                 blocked_ids, config.github_token)
+            shape_kwargs = dict(
+                today=today, state=state, claimed=claimed, today_snap=today_snap,
+                baseline=baseline, gains=theme_gains, token=config.github_token,
+            )
+            (repos, n_searched, n_clean, n_unsent, dropped_no_baseline,
+             baseline_days) = _shape_candidates(repos, theme, **shape_kwargs)
+            # The first slice is still HYDRATE_LIMIT. When that leaves Movers
+            # under the minimum, look up more of the queue (baseline ids
+            # first) up to MOVERS_HYDRATE_LIMIT. fetch_repos aborts if the
+            # core bucket is already under its reserve.
+            if theme.delta_days and len(repos) < MOVERS_MIN_CANDIDATES:
+                room = MOVERS_HYDRATE_LIMIT - len(hydration.attempted)
+                # Baseline ids first, so a rate-limit stop inside this batch
+                # spends the remaining calls on repos the delta filter keeps.
+                extra = _baseline_first(
+                    hydration.pending(), hydration.name_ids, baseline)
+                extra = extra[:max(room, 0)]
+                if extra:
+                    log.info(
+                        "theme %s: %d candidates < %d; looking up %d more "
+                        "external repos",
+                        theme.key, len(repos), MOVERS_MIN_CANDIDATES, len(extra),
+                    )
+                    hydration.take(extra, config.github_token)
+                    (repos, theme_gains, trending_added, trending_considered,
+                     gitnova_added, inflated_dropped) = hydration.result()
+                    shape_kwargs["gains"] = theme_gains
+                    (repos, n_searched, n_clean, n_unsent, dropped_no_baseline,
+                     baseline_days) = _shape_candidates(repos, theme, **shape_kwargs)
             gained[theme.key] = theme_gains
             if theme.github_trending and not theme_gains:
                 trending_empty.append(theme.key)
                 log.warning("theme %s: github trending added no repos", theme.key)
-            repos = [r for r in repos if not r.is_fork and not r.is_archived]
-            for r in repos:
-                today_snap[r.id] = r.stars      # feed the Movers store (every theme, every run)
-            dropped_no_baseline = 0
-            baseline_days = 0
-            if theme.delta_days:                # source candidates by N-day star growth
-                # Baseline merges every snapshot from delta+tolerance ago through
-                # yesterday (oldest count per repo). Today's file is not read.
-                before_delta = len(repos)
-                baseline = find_baseline(config.state_dir, today, theme.delta_days)
-                # Snapshot diff when we have one; otherwise the Trending page's
-                # period gain so an older repo is eligible the day we first see it.
-                extras = theme_gains if theme.github_trending else None
-                repos = order_by_delta(
-                    repos, baseline, extras, span_days=theme.delta_days)
-                dropped_no_baseline = before_delta - len(repos)
-                baseline_days = getattr(baseline, "baseline_days", 0)
-                baselines[theme.key] = baseline
-            elif theme_gains:
-                # No snapshot reorder. Put Trending hits first so the candidate
-                # cap cannot bury an any-age repo under the search head.
-                front = [r for r in repos if r.id in theme_gains]
-                back = [r for r in repos if r.id not in theme_gains]
-                repos = front + back
-            n_searched = len(repos)
-            repos = clean(repos, today, theme.max_idle_days)
-            n_clean = len(repos)
-            repos = unsent(state, theme.key, repos)
-            repos = [r for r in repos if r.id not in claimed]
-            if not theme.delta_days:          # Movers may re-feature a known breakout
-                repos = unposted(state, repos)
-            n_unsent = len(repos)
-            # cap=0 only: empty desc+topics + a README that is clearly AI → drop.
-            # Not applied under ai_cap=N (too aggressive on thin metadata).
-            if theme.agent_skill_cap == 0 or theme.ai_cap == 0:
-                kept = []
-                for r in repos:
-                    if is_empty_metadata(r) and not is_ai_repo(r):
-                        line = readme_first_line(r.full_name, token=config.github_token)
-                        if is_ai_repo(r, readme=line):
-                            continue
-                    kept.append(r)
-                repos = kept
-            repos = cap_agent_skills(repos, theme.agent_skill_cap)
-            repos = cap_ai(repos, theme.ai_cap)
-            repos = cap_stars(repos, theme.max_stars, theme.max_stars_exempt_days, today)
-            repos = repos[:CANDIDATE_LIMIT]
             n_cap = len(repos)
             picked = rank(repos, theme, today=today, ollama_host=config.ollama_host,
                           ollama_model=curator_model or "", ollama_api_key=config.ollama_api_key)

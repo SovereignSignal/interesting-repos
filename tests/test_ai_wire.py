@@ -197,8 +197,22 @@ def test_push_retries_once_then_logs_upserted(caplog):
     assert client.calls[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"
     assert client.calls[0]["timeout"] == 5.0
     assert client.calls[0]["json"]["items"][0]["canonical_key"] == "repo:acme/cool-widgets"
-    assert "ai_wire push ok n=4" in caplog.text
+    assert "ai_wire push ok n=5" in caplog.text
     assert "ai_wire push failed:" not in caplog.text
+
+
+def test_push_logs_created_plus_updated_when_nothing_was_updated(caplog):
+    # New rows come back as created=N, upserted=0. n used to stay 0.
+    caplog.set_level(logging.INFO)
+    client = _Client(lambda call: httpx.Response(
+        200, json={"upserted": 0, "created": 3, "keys": []}))
+    ok = push_items(
+        [_item(), _item(canonical_key="repo:acme/other"), _item(canonical_key="repo:acme/third")],
+        base_url="https://wire.example", token=TOKEN, client=client,
+    )
+    assert ok is True
+    assert "ai_wire push ok n=3" in caplog.text
+    assert "ai_wire push ok n=0" not in caplog.text
 
 
 def test_push_is_one_batch_until_the_api_ceiling():
