@@ -218,3 +218,9 @@ def test_build_messages_orders_momentum_then_growth_then_license():
     m = build_messages(_theme(), repos, describe=lambda r: "", titles=["T"],
                        deltas=[1234], momenta=[38.4])[0]
     assert "⭐ 1,500 · 38★/day · +1.2k★ this week · MIT · Rust · a/b" in m
+
+
+def test_format_delta_labels_a_snapshot_interval_in_days():
+    assert _format_delta(1000, "10d") == "+1.0k★ in 10 days"
+    assert _format_delta(500, "1d") == "+500★ in 1 day"
+    assert _format_delta(500, "mystery") == "+500★"      # never assumed weekly

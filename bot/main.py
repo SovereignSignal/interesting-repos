@@ -23,8 +23,9 @@ from bot.filters import (
 )
 from bot.ranker import rank
 from bot.formatter import build_message_groups
-from bot.ai_wire import items_for_indexes, push_posted
+from bot.ai_wire import items_for_indexes, flush_outbox
 from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
+                          elapsed_days, interval_period,
                           order_by_delta, retain)
 from bot.telegram import send_message
 from bot.translate import translate_to_english
@@ -37,6 +38,7 @@ from bot.alerts import (
 )
 from bot.state import (
     load_state, save_state, unsent, record_sent, unposted, record_posted, posted_ids,
+    enqueue_wire,
     record_wire,
 )
 
@@ -644,11 +646,9 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
     # theme's messages are all sent (a crash never marks a repo "sent" that wasn't
     # delivered); we prefer re-sending over losing a repo. Messages are spaced by
     # config.send_delay_seconds so a 10-theme digest trickles instead of flooding.
-    # AI Wire gets one batch for this run, and only repos whose Telegram send
-    # returned. The push itself is after the loop so a slow ingest cannot sit
-    # between two channel posts.
+    # AI Wire queues only repos whose Telegram send returned. The push itself is
+    # after the loop so a slow ingest cannot sit between two channel posts.
     sent_any = False
-    wire_batch: list = []
     for theme in config.themes:
         picked = results.get(theme.key)
         if not picked:
@@ -680,8 +680,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 delta_periods = []
                 for r in repos_:
                     if r.id in base:
+                        # Label the real interval: a 1- or 10-day diff is not "this week".
                         deltas.append(r.stars - base[r.id])
-                        delta_periods.append("weekly")
+                        delta_periods.append(interval_period(
+                            elapsed_days(base, r.id, theme.delta_days)))
                     elif r.id in extra:
                         gain, period = extra[r.id]
                         deltas.append(gain)
@@ -733,7 +735,6 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                     log.warning("ai_wire push failed: %s", _failure_reason(exc, config))
                     chunk = []
                 posted_items.extend(chunk)
-                wire_batch.extend(chunk)
             # Visibility only: a 1-2 repo digest still goes out unchanged.
             if len(picked) < THIN_POST_BELOW:
                 log.warning("%s", thin_post_line(theme.key, len(picked)))
@@ -741,6 +742,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             state = record_sent(state, theme.key, ids)
             state = record_posted(state, ids)   # movers writes too; only *reads* are exempt
             state = record_wire(state, posted_items)
+            if getattr(config, "ai_wire_enabled", False):
+                # Same save as the sent ids: a dead registry or a crash before
+                # the flush leaves these pending for the next run.
+                state = enqueue_wire(state, posted_items, now.isoformat())
             save_state(state_path, state)
             log.info("theme %s: sent %d repos", theme.key, len(picked))
         except Exception as exc:
@@ -749,11 +754,21 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             outcomes[theme.key] = (
                 "error", len(picked) if picked else 0, _failure_reason(exc, config))
 
-    # One batch for every repo this run actually posted. Flag-off returns
-    # without a request. A dead registry must not change ``failures``.
-    if not dry_run and wire_batch:
+    # Deliver the AI Wire outbox: this run's posts plus anything an earlier run
+    # could not deliver. Flag-off sends nothing. A dead registry must not
+    # change ``failures``; it shows up as the ai_wire source_health row.
+    if not dry_run and getattr(config, "ai_wire_enabled", False):
         try:
-            push_posted(config, wire_batch)
+            state, wire = flush_outbox(config, state, now)
+            save_state(state_path, state)
+            if wire["pending"] or wire["dead"]:
+                detail = f"pending={wire['pending']} oldest_queued_at={wire['oldest']}"
+                if wire["dead"]:
+                    detail += f" rejected={wire['dead']}"
+                extra_outcomes.append(("ai_wire", "error", wire["pending"],
+                                       f"{detail} last={wire['error'] or 'unknown'}"))
+            else:
+                extra_outcomes.append(("ai_wire", "ok", wire["acked"], ""))
         except Exception as exc:
             log.warning("ai_wire push failed: %s", _failure_reason(exc, config))
 

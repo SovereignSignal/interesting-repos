@@ -3,7 +3,12 @@
 Contract (ingest v1): ``POST {AI_WIRE_URL}/api/ingest/items`` with
 ``Authorization: Bearer {AI_WIRE_INGEST_TOKEN}``. One batch per cron run, after
 the Telegram send has succeeded. Timeout 5s, one retry. A failure is a log
-line — it never fails the digest or the backfill command.
+line plus a pending outbox row — it never fails the digest or the backfill.
+
+Every posted item is also queued in ``_ai_wire_outbox`` in the same
+``state.json`` save as the theme. ``flush_outbox`` runs on every ordinary run,
+so a registry that was down during a publish is filled in later without a
+second Telegram post.
 
 ``AI_WIRE_ENABLED`` defaults off. ``state.json`` id lists are not enough to
 rebuild an item (no owner/repo); ``_ai_wire`` rows written at post time are.
@@ -21,7 +26,7 @@ import httpx
 
 from bot.formatter import posted_blurb
 from bot.source_health import short_reason
-from bot.state import WIRE_KEY, load_state
+from bot.state import OUTBOX_KEY, WIRE_KEY, load_state, outbox, record_dead
 from bot.titles import repo_name_title
 
 log = logging.getLogger("bot.ai_wire")
@@ -251,7 +256,15 @@ def _written(resp, fallback: int) -> int:
     return (created or 0) + (updated or 0)
 
 
-def _post_batch(client, endpoint: str, token: str, batch: list, timeout: float) -> bool:
+# Statuses that will not succeed on a retry of the same payload. Auth and
+# routing errors (401/403/404/3xx) stay pending: they are config, not data.
+_PERMANENT = {400, 409, 410, 413, 415, 422}
+OK, TRANSIENT, PERMANENT = "ok", "transient", "permanent"
+
+
+def _deliver_batch(client, endpoint: str, token: str, batch: list,
+                   timeout: float) -> tuple[str, str]:
+    """POST one batch: ``(OK|TRANSIENT|PERMANENT, reason)``. One retry if transient."""
     reason = "unknown"
     for _attempt in range(_ATTEMPTS):
         try:
@@ -272,12 +285,19 @@ def _post_batch(client, endpoint: str, token: str, batch: list, timeout: float) 
             status = getattr(resp, "status_code", None)
             if status == 200:
                 log.info("ai_wire push ok n=%s", _written(resp, len(batch)))
-                return True
+                return OK, ""
             reason = f"HTTP {status}" if status else "HTTP error"
+            if status in _PERMANENT:
+                log.warning("ai_wire push failed: %s", reason)
+                return PERMANENT, reason
         finally:
             _close(resp)
     log.warning("ai_wire push failed: %s", reason)
-    return False
+    return TRANSIENT, reason
+
+
+def _post_batch(client, endpoint: str, token: str, batch: list, timeout: float) -> bool:
+    return _deliver_batch(client, endpoint, token, batch, timeout)[0] == OK
 
 
 def push_items(items, *, base_url: str, token: str, client=None,
@@ -326,6 +346,106 @@ def push_posted(config, items, client=None) -> bool:
         token = getattr(config, "ai_wire_ingest_token", "") or ""
         log.warning("ai_wire push failed: %s", short_reason(exc, token))
         return False
+
+
+def flush_outbox(config, state: dict, now, client=None,
+                 timeout: float = TIMEOUT_SECONDS) -> tuple[dict, dict]:
+    """Deliver pending ``_ai_wire_outbox`` rows. Never raises.
+
+    Acks leave the outbox. A permanent rejection moves the row to
+    ``_ai_wire_dead`` (a multi-item batch is retried one item at a time first,
+    so one bad row does not sink the rest). A transient failure bumps
+    ``attempts`` and stops this flush — the next ordinary run tries again.
+    Returns ``(state, report)`` with ``acked``, ``dead``, ``pending``,
+    ``oldest`` (``queued_at`` of the oldest pending row) and ``error``.
+    """
+    report = {"acked": 0, "dead": 0, "pending": 0, "oldest": None, "error": ""}
+    token = (getattr(config, "ai_wire_ingest_token", "") or "").strip()
+    rows = outbox(state)
+    try:
+        endpoint = ingest_endpoint(getattr(config, "ai_wire_url", "") or "")
+        manifest = {}
+        raw = state.get(WIRE_KEY)
+        for entry in raw if isinstance(raw, list) else []:
+            if isinstance(entry, dict) and isinstance(entry.get("canonical_key"), str):
+                manifest[entry["canonical_key"]] = entry
+        queue = []
+        for row in rows:
+            item = item_from_history(manifest.get(row["key"]))
+            if item is None:
+                # The manifest row aged out or is unusable; nothing to resend.
+                log.warning("ai_wire outbox dropped %s: no posted row", row["key"])
+                continue
+            queue.append((row, item))
+        keep = {id(row) for row, _ in queue}
+        rows = [row for row in rows if id(row) in keep]
+        if queue and (not endpoint or not token):
+            report["error"] = "AI_WIRE_URL or AI_WIRE_INGEST_TOKEN unset"
+            log.warning("ai_wire push failed: %s", report["error"])
+            queue = []
+        owns = client is None and bool(queue)
+        if owns:
+            client = httpx.Client(timeout=timeout)
+        done: set = set()
+        dead: list = []
+        stamp = format_posted_at(now) or ""
+        try:
+            for start in range(0, len(queue), BATCH_LIMIT):
+                chunk = queue[start:start + BATCH_LIMIT]
+                outcome, reason = _deliver_batch(
+                    client, endpoint, token, [item for _, item in chunk], timeout)
+                if outcome == PERMANENT and len(chunk) > 1:
+                    singles = []
+                    for row, item in chunk:
+                        one, why = _deliver_batch(client, endpoint, token, [item], timeout)
+                        singles.append((row, one, why))
+                        if one == TRANSIENT:
+                            break
+                    results = singles
+                else:
+                    results = [(row, outcome, reason) for row, _ in chunk]
+                stop = False
+                for row, one, why in results:
+                    row["attempts"] = int(row.get("attempts") or 0) + 1
+                    row["last_attempt_at"] = stamp
+                    if one == OK:
+                        done.add(id(row))
+                        report["acked"] += 1
+                    elif one == PERMANENT:
+                        done.add(id(row))
+                        dead.append({"key": row["key"], "queued_at": row.get("queued_at"),
+                                     "failed_at": stamp, "error": why})
+                        report["dead"] += 1
+                        report["error"] = why
+                    else:
+                        row["last_error"] = why
+                        report["error"] = why
+                        stop = True
+                if stop:
+                    break
+        finally:
+            if owns:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+        rows = [row for row in rows if id(row) not in done]
+        if dead:
+            for entry in dead:
+                log.warning("ai_wire outbox rejected %s: %s", entry["key"], entry["error"])
+            state = record_dead(state, dead)
+    except Exception as exc:
+        report["error"] = short_reason(exc, token)
+        log.warning("ai_wire push failed: %s", report["error"])
+    state[OUTBOX_KEY] = rows
+    report["pending"] = len(rows)
+    if rows:
+        report["oldest"] = min((str(r.get("queued_at") or "") for r in rows), default=None)
+        log.warning("ai_wire outbox pending=%d oldest_queued_at=%s last_error=%s",
+                    report["pending"], report["oldest"], report["error"] or "none")
+    elif report["acked"]:
+        log.info("ai_wire outbox drained acked=%d", report["acked"])
+    return state, report
 
 
 def _replay(entry: dict) -> dict | None:

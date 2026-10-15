@@ -524,3 +524,151 @@ def test_run_does_not_push_repos_whose_telegram_send_failed(tmp_path, monkeypatc
     assert [item["canonical_key"] for item in posts[0]["items"]] == ["repo:acme/one"]
     saved = json.loads((tmp_path / "state.json").read_text())
     assert "a" in saved and "b" not in saved
+
+
+# Review 2026-10-14 finding 5: a durable outbox for AI Wire delivery.
+
+class _Registry:
+    """Fake ingest endpoint. ``status`` is an int, or "down" for a transport error."""
+
+    def __init__(self, status):
+        self.status = status
+        self.bodies = []
+
+    def install(self, monkeypatch):
+        registry = self
+
+        class Client:
+            def __init__(self, timeout=None):
+                pass
+
+            def post(self, url, json=None, headers=None, timeout=None, **kwargs):
+                registry.bodies.append(json)
+                if registry.status == "down":
+                    raise httpx.ConnectError("connection refused")
+                return httpx.Response(registry.status, json={"created": len(json["items"])})
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("bot.ai_wire.httpx.Client", Client)
+
+
+def _slot_theme():
+    # Only WHEN's slot, so a later ordinary run has no theme to post.
+    return Theme(key="a", name="Alpha", emoji="", query="q", count=1,
+                 at=((WHEN.weekday(), WHEN.hour),))
+
+
+def _publish_with_wire(tmp_path, monkeypatch, status):
+    sends = []
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [
+        Repo(1, "acme/one", "https://github.com/acme/one",
+             "First tool for the digest.", 10, "Go", [], False, False),
+    ])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sends.append(a[2]) or {
+        "ok": True, "result": {"message_id": 41}})
+    registry = _Registry(status)
+    registry.install(monkeypatch)
+    failures = main.run(_wire_cfg(tmp_path, [_slot_theme()]), now=WHEN)
+    return failures, sends, registry
+
+
+def test_outbox_fills_registry_after_outage_and_restart_without_reposting(
+        tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    # 1. Publish while the registry is down for every attempt.
+    failures, sends, down = _publish_with_wire(tmp_path, monkeypatch, "down")
+    assert failures == 0 and len(sends) == 1
+    assert len(down.bodies) == 2                       # the call plus one retry
+    saved = json.loads((tmp_path / "state.json").read_text())
+    pending = saved["_ai_wire_outbox"]
+    assert [row["key"] for row in pending] == ["repo:acme/one"]
+    assert pending[0]["attempts"] == 1 and pending[0]["last_error"]
+    assert "ai_wire outbox pending=1 oldest_queued_at=2026-10-10T13:00:00+00:00" in caplog.text
+    health = json.loads((tmp_path / "source_health.json").read_text())
+    assert health["ai_wire"]["consecutive_error"] == 1
+
+    # 2. "Restart": a fresh run with fresh fakes; only the files on disk carry over.
+    #    The endpoint has recovered, and the next ordinary run is an off-slot hour.
+    caplog.clear()
+    tg_after = []
+    monkeypatch.setattr(main, "send_message",
+                        lambda *a, **k: tg_after.append(a[2]) or {"ok": True})
+    up = _Registry(200)
+    up.install(monkeypatch)
+    later = WHEN.replace(hour=16)
+    failures = main.run(_wire_cfg(tmp_path, [_slot_theme()]), now=later)
+    assert failures == 0
+    assert tg_after == []                              # no repost to Telegram
+    assert len(up.bodies) == 1
+    [item] = up.bodies[0]["items"]
+    assert item["canonical_key"] == "repo:acme/one"
+    assert item["channel_post_url"] == "https://t.me/interestingrepos/41"
+    assert item["posted_at"] == "2026-10-10T13:00:00+00:00"   # the original publish
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["_ai_wire_outbox"] == []
+    assert saved["a"] == [1]
+    health = json.loads((tmp_path / "source_health.json").read_text())
+    assert health["ai_wire"]["consecutive_error"] == 0
+
+    # 3. A further run does not push the acknowledged item again.
+    again = _Registry(200)
+    again.install(monkeypatch)
+    main.run(_wire_cfg(tmp_path, [_slot_theme()]), now=WHEN.replace(hour=19))
+    assert again.bodies == []
+
+
+def test_outbox_dead_letters_a_permanent_rejection(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    failures, sends, registry = _publish_with_wire(tmp_path, monkeypatch, 422)
+    assert failures == 0 and len(sends) == 1
+    assert len(registry.bodies) == 1                   # not retried
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert saved["_ai_wire_outbox"] == []
+    assert saved["_ai_wire_dead"][0]["key"] == "repo:acme/one"
+    assert saved["_ai_wire_dead"][0]["error"] == "HTTP 422"
+    assert "ai_wire outbox rejected repo:acme/one: HTTP 422" in caplog.text
+
+
+def test_outbox_keeps_auth_errors_pending(tmp_path, monkeypatch):
+    _publish_with_wire(tmp_path, monkeypatch, 401)
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert [row["key"] for row in saved["_ai_wire_outbox"]] == ["repo:acme/one"]
+    assert "_ai_wire_dead" not in saved
+
+
+def test_outbox_flag_off_queues_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "search_repos", lambda *a, **k: [
+        Repo(1, "acme/one", "https://github.com/acme/one",
+             "First tool for the digest.", 10, "Go", [], False, False),
+    ])
+    monkeypatch.setattr(main, "readme_first_line", lambda *a, **k: "")
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: {"ok": True})
+    main.run(_wire_cfg(tmp_path, [_slot_theme()], enabled=False), now=WHEN)
+    saved = json.loads((tmp_path / "state.json").read_text())
+    assert "_ai_wire_outbox" not in saved
+
+
+def test_flush_outbox_retries_a_rejected_batch_item_by_item():
+    from bot.ai_wire import flush_outbox
+    from bot.state import enqueue_wire, record_wire
+    good = _item(canonical_key="repo:acme/good")
+    bad = _item(canonical_key="repo:acme/bad")
+    state = record_wire({}, [good, bad])
+    state = enqueue_wire(state, [good, bad], "2026-10-10T13:00:00+00:00")
+    posts = []
+
+    class Client:
+        def post(self, url, json=None, **kwargs):
+            posts.append([i["canonical_key"] for i in json["items"]])
+            keys = {i["canonical_key"] for i in json["items"]}
+            return httpx.Response(422 if "repo:acme/bad" in keys else 200, json={})
+
+    cfg = _cfg(None, ai_wire_enabled=True)
+    state, report = flush_outbox(cfg, state, WHEN, client=Client())
+    assert posts == [["repo:acme/good", "repo:acme/bad"], ["repo:acme/good"], ["repo:acme/bad"]]
+    assert report["acked"] == 1 and report["dead"] == 1 and report["pending"] == 0
+    assert state["_ai_wire_outbox"] == []
+    assert [row["key"] for row in state["_ai_wire_dead"]] == ["repo:acme/bad"]

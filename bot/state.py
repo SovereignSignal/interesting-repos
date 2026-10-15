@@ -94,3 +94,41 @@ def record_wire(state: dict, items: list, cap: int = WIRE_CAP) -> dict:
     if order:
         state[WIRE_KEY] = [by_key[key] for key in order[-cap:]]
     return state
+
+
+# AI Wire delivery outbox. One row per canonical key that is posted but not yet
+# acknowledged by the registry; the payload is the matching ``_ai_wire`` row.
+# Written in the same save as the theme's sent ids, so a crash or a dead
+# registry leaves the delivery pending for the next ordinary run.
+OUTBOX_KEY = "_ai_wire_outbox"
+DEAD_KEY = "_ai_wire_dead"
+OUTBOX_CAP = 2000
+DEAD_CAP = 200
+
+
+def outbox(state: dict) -> list:
+    raw = state.get(OUTBOX_KEY) if isinstance(state, dict) else None
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict) and isinstance(e.get("key"), str)]
+
+
+def enqueue_wire(state: dict, items: list, queued_at: str, cap: int = OUTBOX_CAP) -> dict:
+    """Mark posted items pending. A key already pending keeps its first ``queued_at``."""
+    rows = outbox(state)
+    pending = {e["key"] for e in rows}
+    for item in items or []:
+        key = item.get("canonical_key") if isinstance(item, dict) else None
+        if isinstance(key, str) and key and key not in pending:
+            pending.add(key)
+            rows.append({"key": key, "queued_at": queued_at, "attempts": 0, "last_error": ""})
+    state[OUTBOX_KEY] = rows[-cap:]
+    return state
+
+
+def record_dead(state: dict, rows: list, cap: int = DEAD_CAP) -> dict:
+    """Keep permanently rejected deliveries for inspection, newest last."""
+    raw = state.get(DEAD_KEY)
+    existing = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+    state[DEAD_KEY] = (existing + list(rows))[-cap:]
+    return state
