@@ -11,13 +11,20 @@ _DELTA_LABEL = {"daily": "today", "weekly": "this week", "monthly": "this month"
 def _format_delta(n: int, period: str = "weekly") -> str | None:
     """A compact '+N★ this week' growth annotation, or None when there's nothing
     to show (<=0). Compact form (1.2k) mirrors the 'fastest growing repos this
-    week' post format Movers is based on. ``period="daily"`` says "today"."""
+    week' post format Movers is based on. ``period="daily"`` says "today";
+    a snapshot interval ``"Nd"`` says "in N days". An unknown period gets no
+    label rather than a claim of weekly growth."""
     if n <= 0:
         return None
-    label = _DELTA_LABEL.get(period, "this week")
+    label = _DELTA_LABEL.get(period)
+    if label is None and isinstance(period, str) and period[:-1].isdigit() \
+            and period.endswith("d"):
+        days = int(period[:-1])
+        label = "in 1 day" if days == 1 else f"in {days} days"
+    suffix = f" {label}" if label else ""
     if n >= 1000:
-        return f"+{n / 1000:.1f}k★ {label}"
-    return f"+{n:,}★ {label}"
+        return f"+{n / 1000:.1f}k★{suffix}"
+    return f"+{n:,}★{suffix}"
 
 
 def _format_momentum(v) -> str | None:

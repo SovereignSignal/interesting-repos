@@ -850,7 +850,7 @@ def test_run_movers_baseline_reads_midweek_snapshot(tmp_path, monkeypatch, caplo
     assert failures == 0
     assert "+150★ this week" in body    # 250 - Sunday's 100, not Wednesday's 200
     assert "+50★" not in body
-    assert "+450★ this week" in body    # Wednesday-only repo is eligible
+    assert "+450★ in 4 days" in body    # Wednesday-only repo is eligible, labeled 4 days
     assert "a/3" not in body
     assert "baseline_days=2" in caplog.text
     assert "dropped_no_baseline=1" in caplog.text
@@ -1461,3 +1461,35 @@ def test_run_star_ceiling_with_only_giants_is_a_quiet_slot(tmp_path, monkeypatch
     assert failures == 0 and sent == []
     assert "no new repos" in caplog.text
     assert "quality bar" not in caplog.text
+
+
+def test_run_movers_orders_by_per_day_growth_and_labels_the_real_interval(tmp_path, monkeypatch):
+    """Review 2026-10-14 finding 4. Sunday June 14.
+    A (a/1): +1000 over 10 days (June 4 snapshot)  -> 100/day.
+    B (a/2): +500 over 1 day (June 13 snapshot)    -> 500/day.
+    C (a/3): +200 today — no snapshot; GitHub Trending "daily", an explicit
+             1-day interval ending today          -> 200/day.
+    Old code divided every snapshot diff by 7 and called it weekly: C, A, B."""
+    from bot.trending import TrendingHit
+    _seed_snapshot(tmp_path, date(2026, 6, 4), {1: 1000})
+    _seed_snapshot(tmp_path, date(2026, 6, 13), {2: 4500})
+    c = Repo(3, "a/3", "https://x/3", "desc", 900, "Py", [], False, False)
+    seen, sent = {}, []
+    _install_trending(monkeypatch, [_repo(1, 2000), _repo(2, 5000)],
+                      [TrendingHit("a/3", 200, "daily", 900)], [c], [])
+
+    def fake_rank(repos, theme, **k):
+        from bot.ranker import Pick
+        seen["order"] = [r.id for r in repos]
+        return [Pick(r) for r in repos]
+
+    monkeypatch.setattr(main, "rank", fake_rank)
+    monkeypatch.setattr(main, "send_message", lambda *a, **k: sent.append(a[2]) or {"ok": True})
+    failures = main.run(_cfg(tmp_path, [_trending_theme()]), now=datetime(2026, 6, 14, 19))
+    assert failures == 0
+    assert seen["order"] == [2, 3, 1]                     # B, C, A
+    body = "\n".join(sent)
+    assert "+500★ in 1 day" in body
+    assert "+200★ today" in body
+    assert "+1.0k★ in 10 days" in body
+    assert "this week" not in body                         # 1- or 10-day totals are not weekly

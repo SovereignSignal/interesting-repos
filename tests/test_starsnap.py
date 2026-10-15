@@ -127,3 +127,43 @@ def test_growth_pace_windows():
     assert starsnap.growth_pace(500, "daily") == 500
     assert starsnap.growth_pace(1400, "weekly") == 200
     assert starsnap.growth_pace(3000, "monthly") == 100
+
+
+def _mixed_interval_fixture(tmp_path):
+    """Review 2026-10-14 finding 4. Sunday June 14.
+
+    A: +1000 over 10 days (only snapshot is June 4) -> 100/day.
+    B: +500 over 1 day (only snapshot is June 13)   -> 500/day.
+    C: +200 today. C has no snapshot; its gain is GitHub Trending's "daily"
+       window, i.e. an explicit elapsed interval of 1 day ending today -> 200/day.
+    """
+    today = date(2026, 6, 14)
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 4), {1: 1000})
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 13), {2: 4500})
+    repos = [R(1, 2000), R(2, 5000), R(3, 900)]
+    extras = {3: (200, "daily")}
+    return today, repos, extras
+
+
+def test_order_by_delta_normalizes_by_actual_elapsed_days(tmp_path):
+    today, repos, extras = _mixed_interval_fixture(tmp_path)
+    baseline = starsnap.find_baseline(str(tmp_path), today, delta_days=7)
+    assert baseline.elapsed_days(1) == 10 and baseline.elapsed_days(2) == 1
+    out = starsnap.order_by_delta(repos, baseline, extras, span_days=7)
+    assert [r.id for r in out] == [2, 3, 1]              # B, C, A
+
+
+def test_find_baseline_prefers_the_observation_nearest_delta_days(tmp_path):
+    today = date(2026, 6, 14)
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 4), {1: 10})   # 10 days
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 8), {1: 60})   # 6 days
+    starsnap.save_snapshot(str(tmp_path), date(2026, 6, 13), {1: 90})  # 1 day
+    out = starsnap.find_baseline(str(tmp_path), today, delta_days=7)
+    assert out[1] == 60 and out.elapsed_days(1) == 6
+
+
+def test_interval_period_only_calls_seven_days_weekly():
+    assert starsnap.interval_period(7) == "weekly"
+    assert starsnap.interval_period(1) == "1d"
+    assert starsnap.interval_period(10) == "10d"
+    assert starsnap.growth_pace(1000, "10d") == 100

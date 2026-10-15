@@ -25,6 +25,7 @@ from bot.ranker import rank
 from bot.formatter import build_message_groups
 from bot.ai_wire import items_for_indexes, push_posted
 from bot.starsnap import (load_snapshot, save_snapshot, find_baseline,
+                          elapsed_days, interval_period,
                           order_by_delta, retain)
 from bot.telegram import send_message
 from bot.translate import translate_to_english
@@ -680,8 +681,10 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
                 delta_periods = []
                 for r in repos_:
                     if r.id in base:
+                        # Label the real interval: a 1- or 10-day diff is not "this week".
                         deltas.append(r.stars - base[r.id])
-                        delta_periods.append("weekly")
+                        delta_periods.append(interval_period(
+                            elapsed_days(base, r.id, theme.delta_days)))
                     elif r.id in extra:
                         gain, period = extra[r.id]
                         deltas.append(gain)
