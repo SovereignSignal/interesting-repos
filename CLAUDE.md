@@ -24,7 +24,7 @@ Trending sweeps the remainder):
 - Build `titles` (repo name, or a README H1 only when it is clearly the project name) + `summaries` (one ≤160-character sentence; the curator's *why* is not sent to the model), then `build_messages` (splits at the 4096-char Telegram limit). A blurb that says "notable", leaks a scoring judgment, or names another language or license is dropped and the repo's own description (then the README line) is used.
 - `send_message` (Telegram, primary) then `send_slack_message` (mirror; logs a WARNING on failure, never raises).
 - `save_state` **only after all of a theme's messages send** — a mid-delivery crash re-delivers rather than losing repos.
-- After the Telegram sends in the run, one AI Wire batch (`bot/ai_wire.py`) for the repos that were actually posted. `AI_WIRE_ENABLED` defaults off. Timeout 5s, one retry. A failed push logs `ai_wire push failed:` and does not fail the digest or change what was saved.
+- With `AI_WIRE_ENABLED` (default off), each theme's posted repos are queued in `_ai_wire_outbox` in the same `save_state`. After the Telegram sends, `flush_outbox` (`bot/ai_wire.py`) pushes everything pending, this run's and any earlier run's. Timeout 5s, one retry. An ack removes the row. A permanent 4xx (400/409/410/413/415/422) moves it to `_ai_wire_dead`. A transient failure, or 401/403/404, stays pending and is retried on the next ordinary run, never by reposting to Telegram. The oldest pending row is logged (`ai_wire outbox pending=`) and is the `ai_wire` source_health row, which DMs after 24h. A dead registry never fails the digest.
 
 ## Critical design rules (violating these has bitten us)
 
@@ -129,8 +129,8 @@ theme, keep slots unique):
 | `telegram.py` | `send_message` — HTML, retries w/ backoff, token-sanitized errors |
 | `slack.py` | `send_slack_message` (never raises, returns bool), `html_to_mrkdwn` |
 | `alerts.py` | `llm_reachable` ping, `model_aliases` / `resolve_curator` / `resolve_title_model`, `send_alert` DM (no-op when `ALERT_CHAT_ID` unset) |
-| `state.py` | `load_state`/`save_state` (atomic `.tmp`+`os.replace`), `unsent`/`record_sent` (keyed by `theme.key`, cap 500), `unposted`/`record_posted` (`_posted`, cap 2000; Movers is exempt from the read), `record_wire` (`_ai_wire`, cap 2000; ingest rows, not ids) |
-| `ai_wire.py` | Map a posted repo to an ingest item and `POST` one batch. Flag-off no-op. 5s timeout, 1 retry. Never raises. `--backfill-ai-wire` replays `_ai_wire` (dry-run unless `--send`) |
+| `state.py` | `load_state`/`save_state` (atomic `.tmp`+`os.replace`), `unsent`/`record_sent` (keyed by `theme.key`, cap 500), `unposted`/`record_posted` (`_posted`, cap 2000; Movers is exempt from the read), `record_wire` (`_ai_wire`, cap 2000; ingest rows, not ids), `enqueue_wire`/`record_dead` (`_ai_wire_outbox` keys pending delivery, `_ai_wire_dead` rejections) |
+| `ai_wire.py` | Map a posted repo to an ingest item; `flush_outbox` delivers pending rows (ack / permanent / transient). Flag-off no-op. 5s timeout, 1 retry. Never raises. `--backfill-ai-wire` replays `_ai_wire` (dry-run unless `--send`) |
 | `ollama.py` | `chat` / `chat_accepted` — `/api/chat`; `chat` returns "" on error (silent degradation); `chat_accepted` is HTTP 200 even with blank content |
 
 ## Operating notes
