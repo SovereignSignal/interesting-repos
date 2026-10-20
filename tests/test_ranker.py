@@ -3,7 +3,7 @@ from datetime import date
 
 import httpx
 
-from bot.ranker import rank, rank_by_stars, _rank_llm, _parse_scores, Pick
+from bot.ranker import rank, rank_by_stars, _rank_llm, _parse_scores, _salvage_scores, Pick
 from bot.config import Theme
 
 
@@ -295,3 +295,55 @@ def test_rank_llm_parses_scores_after_earlier_brackets():
                client=_content_client(reply))
     assert [(p.repo.id, p.why) for p in out] == [(1, "novel")]
     assert out.fallback_reason is None
+
+
+# One malformed row must not sink the whole reply (2026-10-20: gamedev went
+# stars-only on kimi-k3 with "unparseable"; 15 replays of the same pool parsed).
+
+def test_salvage_scores_rows_around_an_unescaped_quote():
+    text = ('[{"i": 0, "score": 8, "why": "solid"},\n'
+            ' {"i": 1, "score": 3, "why": "the "best" engine"},\n'
+            ' {"i": 2, "score": 7, "why": "useful"}]')
+    assert _salvage_scores(text) == [(0, 8.0, "solid"), (1, 3.0, 'the "best" engine'),
+                                   (2, 7.0, "useful")]
+
+
+def test_salvage_scores_trailing_comma():
+    text = '[{"i": 0, "score": 8, "why": "solid"},\n]'
+    assert _salvage_scores(text) == [(0, 8.0, "solid")]
+
+
+def test_salvage_scores_complete_rows_of_a_truncated_reply():
+    text = '[{"i": 0, "score": 8, "why": "solid"}, {"i": 1, "score": 9, "why": "cut of'
+    assert _salvage_scores(text) == [(0, 8.0, "solid")]
+
+
+def test_salvage_scores_string_typed_numbers():
+    text = '[{"i": "0", "score": "7", "why": "ok"}]'
+    assert _salvage_scores(text) == [(0, 7.0, "ok")]
+
+
+def test_salvage_scores_finds_nothing_in_prose_with_braces():
+    assert _salvage_scores("I can't score {these} repos, sorry.") == []
+
+
+def test_rank_llm_salvaged_reply_is_curated_not_fallback(caplog):
+    caplog.set_level("WARNING")
+    repos = [R(1, 10), R(2, 99)]
+    reply = '[{"i": 0, "score": 9, "why": "the "real" deal"}, {"i": 1, "score": 2, "why": "x"},]'
+    out = rank(repos, _theme("llm", 2), ollama_host="http://x", ollama_model="m",
+               client=_content_client(reply))
+    assert [(p.repo.id, p.score) for p in out] == [(1, 9.0)]
+    assert out.fallback_reason is None
+    assert any("salvaged 2 score rows" in m for m in _bot_warnings(caplog))
+
+
+def test_rank_llm_unparseable_logs_a_reply_excerpt(caplog):
+    caplog.set_level("WARNING")
+    reply = "Sure! " + "x" * 2000 + " THE-END"
+    rank([R(1, 10)], _theme("llm", 1), ollama_host="http://x", ollama_model="m",
+         ollama_api_key="super-secret-key", client=_content_client(reply))
+    excerpt = [m for m in _bot_warnings(caplog) if "unparseable reply" in m]
+    assert excerpt and "Sure!" in excerpt[0] and "THE-END" in excerpt[0]
+    assert len(excerpt[0]) < 1000
+    assert "super-secret-key" not in caplog.text
