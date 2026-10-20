@@ -35,7 +35,11 @@ Trending sweeps the remainder):
 - **`rank()` has three outcomes, and empty ≠ fallback:** scored picks above `min_score` → post them;
   scored but none clear the bar → **empty list = quiet slot** (logged INFO "none above the quality bar",
   not a failure, theme posts nothing); LLM down/unparseable → `_rank_llm` returns `None` → **stars
-  fallback** (Picks with empty whys) so a digest still ships.
+  fallback** (Picks with empty whys) so a digest still ships. "Unparseable" is only declared after
+  `_salvage_scores` finds no usable row: a malformed array (an unescaped quote in one `why`, a
+  trailing comma, a truncated tail) is rescued row by row, logs a WARNING "salvaged N score rows",
+  and still counts as curated. A true unparseable logs a bounded reply excerpt (2026-10-20: a
+  one-off kimi-k3 reply on gamedev went stars-only and the log held no evidence of why).
 - **Graceful degradation is silent by design, so it must be alarmed.** Every LLM call falls back to ""
   (stars-sort / repo-name titles, which are never a model call / raw descriptions / untranslated text). A bad `OLLAMA_API_KEY`
   once degraded prod with no crash and no alert (2026-06-06). `bot/alerts.llm_reachable` now
@@ -65,9 +69,9 @@ Trending sweeps the remainder):
   (catalog id of `OLLAMA_MODEL`, else `-cloud` sibling, else the live curator; the
   function name is historical, from when titles were a model call). A retired/401
   primary self-heals to the next candidate (heads-up DM, run not degraded); only an all-down
-  chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=deepseek-v4-pro:0813,gpt-oss:120b`
-  with `gemma4:31b` base (predecessors `deepseek-v4-pro` untagged, `deepseek-v3.1:671b`,
-  and `gemma3:12b`). (Ollama Cloud retires models with little notice — `qwen3-next:80b`
+  chain is stars-only + degraded. Prod runs `OLLAMA_CURATOR_MODEL=kimi-k3,glm-5.3,deepseek-v4.1-flash`
+  with `deepseek-v4.1-flash` base (as of 2026-10-20; earlier chains used `deepseek-v4-pro:0813`,
+  `gpt-oss:120b`, `gemma4:31b`, `deepseek-v3.1:671b` and `gemma3:12b`). (Ollama Cloud retires models with little notice — `qwen3-next:80b`
   was pulled 2026-06-16, which is why the fallback chain exists; on a degraded/heads-up
   alert, probe the model for HTTP 410 and `GET /api/tags`.)
 - **Never log at INFO around sends.** httpx logs request URLs at INFO and the Telegram token sits in

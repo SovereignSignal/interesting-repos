@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -156,6 +157,38 @@ def _parse_scores(text: str) -> list | None:
     return [] if saw_empty else None
 
 
+_ROW = re.compile(r"\{[^{}]*\}")
+_ROW_I = re.compile(r'"i"\s*:\s*"?(\d+)"?')
+_ROW_SCORE = re.compile(r'"score"\s*:\s*"?(\d+(?:\.\d+)?)"?')
+_ROW_WHY = re.compile(r'"why"\s*:\s*"(.*)"\s*\}$', re.S)
+
+
+def _salvage_scores(text: str) -> list:
+    """Row-by-row rescue when no whole array parses: one unescaped quote, a
+    trailing comma, or a truncated tail would otherwise sink every score.
+    Each flat ``{...}`` row is tried as JSON, then by key regex. An incomplete
+    last row has no ``}`` and is dropped. ``[]`` if no row has ``i`` + ``score``."""
+    out = []
+    for raw in _ROW.findall(text or ""):
+        try:
+            rows = _score_rows([json.loads(raw)])
+        except Exception:
+            rows = None
+        if rows:
+            out.extend(rows)
+            continue
+        i, score = _ROW_I.search(raw), _ROW_SCORE.search(raw)
+        if i and score:
+            why = _ROW_WHY.search(raw)
+            out.append((int(i.group(1)), float(score.group(1)), why.group(1) if why else ""))
+    return out
+
+
+def _excerpt(text: str, head: int = 300, tail: int = 200) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= head + tail else f"{flat[:head]} … {flat[-tail:]}"
+
+
 def _describe_age(repo, today: date) -> str:
     created = age_days(repo.created_at, today)
     pushed = age_days(repo.pushed_at, today)
@@ -217,7 +250,14 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
         return None, fail
     parsed = _parse_scores(text)
     if parsed is None:
-        return None, "unparseable"
+        parsed = _salvage_scores(text)
+        if not parsed:
+            # The reply is the only evidence of why; keep a bounded excerpt.
+            log.warning("theme %s: unparseable reply (%d chars): %s",
+                        theme.key, len(text), _excerpt(text))
+            return None, "unparseable"
+        log.warning("theme %s: salvaged %d score rows from a malformed reply "
+                    "(%d candidates)", theme.key, len(parsed), len(repos))
     picks, seen = [], set()
     for i, score, why in sorted(parsed, key=lambda t: -t[1]):
         if 0 <= i < len(repos) and i not in seen and score >= theme.min_score:
