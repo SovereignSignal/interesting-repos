@@ -118,7 +118,9 @@ def test_threshold_at_24h_alerts_empty_and_error(tmp_path):
     _report(tmp_path, [("crypto", "empty", 0, "")], T0 + timedelta(hours=24), box)
     assert len(box) == 1
     assert box[0][1] == "dm-admin"
+    assert box[0][2].startswith("⚠️ Pacer Repos: source crypto has been empty")
     assert "has been empty for 24h+" in box[0][2]
+    assert "interesting-repos" not in box[0][2]
     assert TG_TOKEN not in box[0][2]
 
     err_dir_box = []

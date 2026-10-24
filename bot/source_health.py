@@ -20,6 +20,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from html import escape as html_escape
 
+from bot.brand import DISPLAY_NAME
+
 log = logging.getLogger("bot")
 
 HEALTH_FILENAME = "source_health.json"
@@ -86,7 +88,7 @@ def alert_text(source: str, status: str, items: int, entry: dict, error: str = "
     """Admin DM body. Dynamic bits are HTML-escaped (Telegram parse_mode=HTML)."""
     kind = "empty" if status == "empty" else "erroring"
     body = (
-        f"⚠️ interesting-repos: source {html_escape(str(source))} has been {kind} "
+        f"⚠️ {DISPLAY_NAME}: source {html_escape(str(source))} has been {kind} "
         f"for 24h+ (items={int(items)}, "
         f"consecutive_empty={int(entry.get('consecutive_empty') or 0)}, "
         f"consecutive_error={int(entry.get('consecutive_error') or 0)})."

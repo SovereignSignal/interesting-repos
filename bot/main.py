@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime, timezone, date
 
+from bot.brand import DISPLAY_NAME
 from bot.config import apply_star_ceiling, expand_since
 from bot.github import (
     search_repos, fetch_repos, readme_first_line, readme_parts,
@@ -773,12 +774,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             log.warning("ai_wire push failed: %s", _failure_reason(exc, config))
 
     if not dry_run:
+        mark = f"⚠️ {DISPLAY_NAME}"
         if degraded:
             # Whole chain down — this DM already says the run is stars-only.
             # rank() still logs a WARNING and sets fallback_reason; a second
             # scoring DM would double-page the same outage.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       "⚠️ interesting-repos: Ollama unreachable/unauthorized — this run is "
+                       f"{mark}: Ollama unreachable/unauthorized — this run is "
                        "degraded (stars-only picks, no AI blurbs/translation). "
                        "Check OLLAMA_API_KEY in Railway.")
         elif scoring_fallbacks:
@@ -787,13 +789,13 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             # A quiet slot (scores parsed, none above min_score) is not in this list.
             detail = ", ".join(f"{key} ({reason})" for key, reason in scoring_fallbacks)
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       "⚠️ interesting-repos: LLM scoring failed — "
+                       f"{mark}: LLM scoring failed — "
                        f"{detail}. Stars fallback; curator scores were not usable.")
         elif curator_skipped and curator_model:
             # primary curator(s) were down but a fallback worked — the run is fully curated,
             # just on a backup model; nudge Sov to fix the config (e.g. a retired model).
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       f"⚠️ interesting-repos: curator model(s) {', '.join(curator_skipped)} "
+                       f"{mark}: curator model(s) {', '.join(curator_skipped)} "
                        f"unavailable — ran on {curator_model}. "
                        "Update OLLAMA_CURATOR_MODEL in Railway.")
         if title_via == TITLE_VIA_CURATOR:
@@ -802,19 +804,19 @@ def run(config, now: datetime | None = None, dry_run: bool = False) -> int:
             # curator-skipped branch above: both can fire (a fallback curator AND a dead
             # base). A working cloud alias of OLLAMA_MODEL is via=base and stays silent.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       f"⚠️ interesting-repos: base model {config.ollama_model} unavailable — "
+                       f"{mark}: base model {config.ollama_model} unavailable — "
                        f"translation ran on {title_model} "
                        "(curation unaffected; titles are the repo name). "
                        "Update OLLAMA_MODEL in Railway.")
         if failures:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       f"⚠️ interesting-repos: {failures} theme(s) failed this run.")
+                       f"{mark}: {failures} theme(s) failed this run.")
         if trending_empty:
             # The search pool still ran. This DM is the age-free source being
             # down (page markup or hydrate), which otherwise looks like a
             # normal thin Movers post.
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       "⚠️ interesting-repos: GitHub Trending added no repos for "
+                       f"{mark}: GitHub Trending added no repos for "
                        f"{', '.join(trending_empty)}; search-pool only this run.")
     # Observability only. Does not change picks, message text, or state.json.
     ordered = []
