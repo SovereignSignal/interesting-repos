@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from html import escape
 
 from bot.ai_wire import backfill
+from bot.alerts import send_alert
+from bot.brand import DISPLAY_NAME
 from bot.config import load_config
 from bot.main import run
-from bot.alerts import send_alert
 
 
 def _configure_logging() -> None:
@@ -33,7 +34,9 @@ def _parse_now(raw: str) -> datetime:
 
 def cli(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bot", description="Interesting GitHub repos → Telegram, by theme")
+        prog="bot",
+        description=f"{DISPLAY_NAME} — GitHub repos → Telegram, by theme",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print messages instead of sending")
     parser.add_argument("--themes", default="themes.toml", help="path to themes.toml")
     parser.add_argument("--now", metavar="ISO",
@@ -74,7 +77,7 @@ def cli(argv=None) -> int:
         # here means an unhandled crash. escape() so a message with HTML chars still sends.
         if not args.dry_run:
             send_alert(config.telegram_bot_token, config.alert_chat_id,
-                       f"❌ interesting-repos run crashed: {type(e).__name__}: {escape(str(e))}")
+                       f"❌ {DISPLAY_NAME} run crashed: {type(e).__name__}: {escape(str(e))}")
         raise
     return 1 if failures else 0
 

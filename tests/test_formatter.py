@@ -23,7 +23,7 @@ def test_build_messages_single_message_has_header_title_meta_and_desc():
     repos = [R(1, "owner/widgets", "https://x/1", "Cool tool", 1500, "Rust")]
     msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=["Cool Widgets"])
     m = msgs[0]
-    assert "🔥 <b>Top Stars</b>" in m
+    assert m.startswith("🔥 <b>Top Stars</b> · Pacer Repos\n")
     assert '<a href="https://x/1"><b>Cool Widgets</b></a>' in m   # clean title is the link
     assert "⭐ 1,500 · Rust · owner/widgets" in m                  # path demoted to meta
     assert "Cool tool" in m
@@ -67,6 +67,18 @@ def test_build_messages_splits_over_limit():
     msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=titles)
     assert len(msgs) > 1
     assert all(len(m) <= TELEGRAM_LIMIT for m in msgs)
+
+
+def test_split_continuations_do_not_repeat_the_brand():
+    # The product name rides on the theme header. A continuation has no
+    # header, so it does not grow a footer just to repeat the name.
+    repos = [R(i, f"a/{i}", "u", "x" * 1000, i, "Go") for i in range(30)]
+    titles = [f"T{i}" for i in range(30)]
+    msgs = build_messages(_theme(), repos, describe=lambda r: "", titles=titles)
+    assert len(msgs) > 1
+    assert msgs[0].startswith("🔥 <b>Top Stars</b> · Pacer Repos")
+    assert all(not m.startswith("🔥") for m in msgs[1:])
+    assert all("Pacer Repos" not in m for m in msgs[1:])
 
 
 def test_build_message_groups_cover_every_repo_once():

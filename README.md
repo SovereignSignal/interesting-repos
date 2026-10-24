@@ -1,4 +1,4 @@
-# Interesting Repos → Telegram
+# Pacer Repos
 
 Digest of trending GitHub repos, by theme, posted to a Telegram group.
 Push-only: a script run by Railway cron four times daily. No server.

@@ -759,9 +759,12 @@ def test_run_alerts_on_unparseable_scoring_not_ran_on(tmp_path, monkeypatch, cap
                     curator=("gemma4:31b", ["deepseek-v4-pro:0813"]))
     failures = main.run(_llm_cfg(tmp_path), now=datetime(2026, 6, 8, 13))
     assert failures == 0 and sent   # stars fallback still posts
+    assert sent[0].startswith("<b>T</b> · Pacer Repos\n")
     assert len(alerts) == 1
     chat, text = alerts[0]
     assert chat == "dm-alerts"          # ALERT_CHAT_ID, not the digest channel
+    assert text.startswith("⚠️ Pacer Repos:")
+    assert "interesting-repos" not in text
     assert "t (unparseable)" in text
     assert "LLM scoring failed" in text
     assert "ran on" not in text

@@ -1,5 +1,6 @@
 from html import escape
 
+from bot.brand import DISPLAY_NAME
 from bot.summaries import prepare_public_blurb
 
 TELEGRAM_LIMIT = 4096
@@ -87,6 +88,19 @@ def posted_blurb(repo, summary, describe, translate=lambda s: s) -> str:
     return _public_desc(repo, summary, describe, translate)
 
 
+def _theme_header(theme) -> str:
+    """Theme header plus a light product attribution.
+
+    The header already names the slot. ``DISPLAY_NAME`` rides on that line.
+    Continuation messages are built without this header, so they do not
+    repeat the name and do not grow a footer.
+    """
+    label = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
+    if not label:
+        return ""
+    return f"{label} · {escape(DISPLAY_NAME)}"
+
+
 def build_message_groups(theme, repos, describe, translate=lambda s: s, titles=None,
                          summaries=None, deltas=None, momenta=None,
                          delta_periods=None) -> list[tuple[str, tuple[int, ...]]]:
@@ -95,7 +109,7 @@ def build_message_groups(theme, repos, describe, translate=lambda s: s, titles=N
     A split puts the overflowing repo on the next message, so a channel
     ``message_id`` can be attached to the repos that were actually in that post.
     """
-    header = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
+    header = _theme_header(theme)
     if titles is None:
         titles = [r.full_name for r in repos]
     if summaries is None:

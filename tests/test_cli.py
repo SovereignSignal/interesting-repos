@@ -28,7 +28,19 @@ def test_cli_alerts_on_crash_and_reraises(monkeypatch):
     monkeypatch.setattr(_cli, "send_alert", lambda token, chat, text, **k: alerts.append(text) or True)
     with pytest.raises(RuntimeError):
         _cli.cli([])
-    assert alerts and "crashed" in alerts[0] and "kaboom" in alerts[0]
+    assert alerts and alerts[0].startswith("❌ Pacer Repos run crashed:")
+    assert "kaboom" in alerts[0]
+    assert "interesting-repos" not in alerts[0]
+
+
+def test_cli_help_names_pacer_repos(capsys):
+    with pytest.raises(SystemExit) as caught:
+        _cli.cli(["--help"])
+    assert caught.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "Pacer Repos — GitHub repos → Telegram, by theme" in help_text
+    assert "interesting-repos" not in help_text
+    assert "Interesting" not in help_text
 
 
 def test_cli_passes_now_and_theme_and_skips_telegram_on_dry_run(monkeypatch, tmp_path):
