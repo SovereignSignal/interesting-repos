@@ -405,6 +405,7 @@ def make_summaries(repos, excerpts=None, whys=None, host: str = "", model: str =
         for i, (r, ex) in enumerate(zip(repos, excerpts))
     )
     prompt = (
+        "You are Raven, Sov's Grok Bot. Write in your own voice. Never write as or for Sov.\n"
         "For each GitHub repository below, write ONE complete factual sentence of "
         f"at most {BLURB_PROMPT_LIMIT} characters in plain English: what it does, "
         "and why a developer would look at it now. Use only the description and "

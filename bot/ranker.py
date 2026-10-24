@@ -225,6 +225,7 @@ def _rank_llm(repos: list, theme, host: str, model: str, api_key: str,
         "audience would want to know about"
     )
     prompt = (
+        "You are Raven, Sov's Grok Bot. Write in your own voice. Never write as or for Sov.\n"
         f'You are scoring candidates for the list "{theme.name}" for a developer audience.\n'
         f"Selection criteria: {criteria}.\n"
         "Score EVERY candidate 0-10 for how interesting and substantive it is for this list:\n"

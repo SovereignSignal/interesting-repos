@@ -9,6 +9,8 @@ TELEGRAM_LIMIT = 4096
 _DELTA_LABEL = {"daily": "today", "weekly": "this week", "monthly": "this month"}
 
 
+DISCLOSURE_FOOTER = "Curated by Raven, Sov's Grok Bot"
+
 def _format_delta(n: int, period: str = "weekly") -> str | None:
     """A compact '+N★ this week' growth annotation, or None when there's nothing
     to show (<=0). Compact form (1.2k) mirrors the 'fastest growing repos this
@@ -93,7 +95,7 @@ def _theme_header(theme) -> str:
 
     The header already names the slot. ``DISPLAY_NAME`` rides on that line.
     Continuation messages are built without this header, so they do not
-    repeat the name and do not grow a footer.
+    repeat the name. The disclosure footer rides on the last message only.
     """
     label = f"{theme.emoji} <b>{escape(theme.name)}</b>".strip()
     if not label:
@@ -137,6 +139,14 @@ def build_message_groups(theme, repos, describe, translate=lambda s: s, titles=N
             indexes.append(i)
     if current:
         messages.append((current, tuple(indexes)))
+    if messages:
+        # Disclosure goes on the last message only: a bot curated this, not Sov.
+        last_text, last_indexes = messages[-1]
+        signed = f"{last_text}\n\n{DISCLOSURE_FOOTER}"
+        if len(signed) <= TELEGRAM_LIMIT:
+            messages[-1] = (signed, last_indexes)
+        else:
+            messages.append((DISCLOSURE_FOOTER, ()))
     return messages
 
 
